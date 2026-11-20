@@ -1,0 +1,16 @@
+# 本地依赖与调试资料
+node_modules/
+devtools-runtime/
+*.log
+*.png
+.env
+.env.*
+*.pem
+*.key
+安装说明.txt
+验证结果.txt
+inspect-*.js
+restore-live-settings.js
+test-live-controls.js
+verify.cjs
+verify-rank.cjs

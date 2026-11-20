@@ -1,0 +1,72 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const {JSDOM} = require('jsdom');
+const source = fs.readFileSync(path.join(__dirname,'chrome-extension/content.js'),'utf8');
+const values = {}, windows = [];
+const wait = ms=>new Promise(r=>setTimeout(r,ms));
+const clone = value=>JSON.parse(JSON.stringify(value));
+let listener, failWrites = false;
+const storage = {
+  async get(key) { await wait(4); return clone(key === null ? values : {[key]:values[key]}); },
+  async set(patch) { await wait(4); if(failWrites) throw Error('quota'); Object.assign(values,clone(patch)); }
+};
+const context = vm.createContext({URL,chrome:{runtime:{id:'test-extension',onMessage:{addListener:fn=>listener=fn}},storage:{local:storage}}});
+context.importScripts = name=>vm.runInContext(fs.readFileSync(path.join(__dirname,'chrome-extension',name),'utf8'),context);
+vm.runInContext(fs.readFileSync(path.join(__dirname,'history-background.js'),'utf8'),context);
+const send = (message,url='https://fanqienovel.com/library')=>new Promise(resolve=>listener({channel:'fq-filter-history',...message},{id:'test-extension',url},resolve));
+function page(title='原神：旅途',id='1234567890123456789') {
+  const dom = new JSDOM('<html><body><main><div class="stack-book-item"><div class="book-item-text"><a class="book-item-title"></a><div class="book-item-desc">作者：测试作者</div><div class="book-item-abstract">冒险故事</div></div></div></main></body></html>',{url:'https://fanqienovel.com/library/test',runScripts:'outside-only'});
+  const w=dom.window; windows.push(w);
+  const a=w.document.querySelector('a'); a.textContent=title; a.href='/page/'+id;
+  w.chrome={storage:{local:storage},runtime:{sendMessage:send}};
+  w.navigator.clipboard={writeText:async text=>{w.copied=text;}};
+  w.Blob=Blob; w.URL.createObjectURL=blob=>{w.exported=blob;return 'blob:test';}; w.URL.revokeObjectURL=()=>{};
+  w.HTMLAnchorElement.prototype.click=function(){};
+  w.eval(source); return w;
+}
+const shadow=w=>w.document.getElementById('fq-keyword-filter-host').shadowRoot;
+const records=()=>Object.entries(values).filter(([key])=>key.startsWith('fq-history-book-')).map(([,row])=>row);
+(async()=>{
+  const a=page(), b=page(); await wait(280);
+  assert.equal(records().length,1,'two tabs deduplicate');
+  assert.equal(records()[0].author,'测试作者');
+  const firstSeen=records()[0].firstSeen;
+  const sh=shadow(a); sh.getElementById('open').click(); sh.getElementById('history-open').click(); await wait(60);
+  assert.equal(sh.querySelectorAll('#history-list li[data-book-id]').length,1);
+  sh.querySelector('.history-actions button').click(); await wait(10); assert.equal(a.copied,'原神：旅途');
+  await Promise.all([
+    sh.querySelector('.history-actions button:nth-child(2)').onclick(),
+    send({action:'record',records:[{id:records()[0].id,title:'原神：旅途',matches:['原神','崩铁']}]})
+  ]);
+  assert.ok(records()[0].handledAt,'recording never loses manual mark');
+  assert.equal(records()[0].firstSeen,firstSeen);
+  assert.equal(sh.querySelectorAll('#history-list li[data-book-id]').length,0,'pending excludes handled');
+  sh.getElementById('history-filter').value='handled'; sh.getElementById('history-filter').onchange();
+  assert.equal(sh.querySelectorAll('#history-list li[data-book-id]').length,1);
+  await sh.querySelector('.history-actions button:nth-child(2)').onclick(); assert.equal(records()[0].handledAt,0);
+  const c=page('=原神 <img src=x onerror=alert(1)>','2222222222222222222'); await wait(260);
+  sh.getElementById('history-filter').value='all'; await sh.getElementById('history-refresh').onclick();
+  assert.equal(sh.querySelectorAll('#history-list li[data-book-id]').length,2);
+  assert.equal(sh.querySelectorAll('#history-list img').length,0,'titles are inert text');
+  sh.getElementById('history-search').value='测试作者'; sh.getElementById('history-search').oninput();
+  assert.equal(sh.querySelectorAll('#history-list li[data-book-id]').length,2);
+  sh.getElementById('history-search').value='不存在'; sh.getElementById('history-search').oninput();
+  assert.equal(sh.querySelectorAll('#history-list li[data-book-id]').length,0);
+  sh.getElementById('history-export').click(); const csv=await a.exported.text();
+  assert.match(csv,/书名/); assert.match(csv,/"'=原神/,'CSV formulas neutralized');
+  a.navigator.clipboard.writeText=async()=>{throw Error('denied');};
+  sh.getElementById('history-copy').click(); await wait(20);
+  assert.equal(sh.getElementById('copy-fallback').hidden,false);
+  assert.match(sh.getElementById('copy-text').value,/1234567890123456789/);
+  const reloaded=page(); await wait(250); const sr=shadow(reloaded);
+  sr.getElementById('history-open').click(); await wait(50); assert.match(sr.getElementById('history-summary').textContent,/共 2 本/);
+  failWrites=true; const failed=page('鸣潮：存储异常','3333333333333333333'); await wait(250);
+  assert.equal(failed.document.querySelector('.stack-book-item').getAttribute('data-fq-keyword-blocked'),'hide');
+  assert.match(shadow(failed).getElementById('history-save-warning').textContent,/保存失败/);
+  failWrites=false; failed.document.querySelector('.book-item-abstract').textContent+='继续'; await wait(250);
+  assert.equal(records().length,3); assert.equal(shadow(failed).getElementById('history-save-warning').textContent,'');
+  assert.equal((await send({action:'list'},'https://example.com/')).ok,false);
+  console.log('PASS history: concurrent tabs, deduplication, manual progress preservation, persistence, filters, copy fallback, safe rendering/CSV, storage failure recovery, sender checks');
+})().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>windows.forEach(w=>w.close()));
