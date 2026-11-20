@@ -1,4 +1,4 @@
-// GPL-3.0-or-later. Serialize history updates across tabs; no network access.
+// GPL-3.0-only. Serialize history updates across tabs; no network access.
 importScripts('history-core.js');
 const historyStorage = {
   all: () => chrome.storage.local.get(null),

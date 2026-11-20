@@ -13,7 +13,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.7.0
+// @version      1.8.0
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -23,12 +23,18 @@
 // @grant        GM_listValues
 // @grant        GM_registerMenuCommand
 // @noframes
-// @license      GPL-3.0-or-later
+// @license      GPL-3.0-only
+// @copyright    字体映射：naiyQAQ/fanqie-assistant 贡献者；详见下文来源注释。
+// @supportURL   https://github.com/beforgeted/fanqie-rebuild/issues
 // ==/UserScript==
+// GPL version 3 only: https://www.gnu.org/licenses/gpl-3.0.html
+// Source and notices: https://github.com/beforgeted/fanqie-rebuild
 
-/* 字体字符对应数据参考 naiyQAQ/fanqie-assistant (GPLv3):
+/* 字体字符映射复制自 naiyQAQ/fanqie-assistant，作者 naiyQAQ 及贡献者 (GPLv3)。
+ * 两套表各 372 字符，拼接为字符串；本项目另写 readText 读取逻辑。
+ * 2026-11-21 补全来源；上游 README 存在与 GPL 不一致的用途限制，详见第三方来源与许可.md。
  * https://github.com/naiyQAQ/fanqie-assistant
- * https://greasyfork.org/scripts/589115/code
+ * https://github.com/naiyQAQ/fanqie-assistant/blob/2fa27f8e885232ca2583e931830f95775368538d/src/fontDecrypt.ts
  * 仅请求番茄官方接口；用户主动同步候选时写入官方书架，不修改正文。 */
 (async () => {
   'use strict';
@@ -213,6 +219,7 @@
     abstract: saved?.abstract !== false
   };
   let drawerReady=false,drawerTab=null,drawer=null,drawerReturn=null,drawerRulesLoaded=false;
+  let intro=null;
   let reveal = false;
   let timer;
   let lastPath = location.pathname + location.search;
@@ -266,7 +273,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.7.0</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.8.0</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -578,8 +585,8 @@
       b.onclick=async e=>{e.preventDefault();e.stopPropagation();await choose(book,state);};parent.append(b);
     }
   }
-  async function choose(book,state) {
-    if(choiceBusy)return;choiceBusy=true;
+  async function choose(book,state,{quiet=false}={}) {
+    if(choiceBusy)return false;choiceBusy=true;
     const prior=choices.get(book.id)?.state||'none';
     try {
       const row=await historyCall({action:'choose',book,state});choices.set(book.id,row);
@@ -587,7 +594,8 @@
       cq('msg').replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));
       const undo=document.createElement('button');undo.textContent='撤销';undo.onclick=()=>choose(book,prior);cq('msg').append(undo);
       if(detailBook()){detailFeedback.replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));const back=undo.cloneNode(true);back.onclick=()=>choose(book,prior);detailFeedback.append(back);}
-    } catch {const error='保存失败，请重试；原标记未改变。';cq('msg').textContent=error;if(detailBook())detailFeedback.textContent=error;else if(drawerReady){openDrawer(prior==='skip'?'skip':'later');}else{choiceListOpen=true;renderChoices();}}
+      return true;
+    } catch {if(quiet)return false;const error='保存失败，请重试；原标记未改变。';cq('msg').textContent=error;if(detailBook())detailFeedback.textContent=error;else if(drawerReady){openDrawer(prior==='skip'?'skip':'later');}else{choiceListOpen=true;renderChoices();}}
     finally{choiceBusy=false;}
   }
   function detailBook(){const id=location.pathname.match(/^\/page\/(\d+)/)?.[1];const title=document.querySelector('h1')?.textContent.trim();return id&&title?{id,title,abstract:document.querySelector('.page-abstract-content')?.textContent||'',author:document.querySelector('.author-name')?.textContent.trim()||''}:null;}
@@ -617,11 +625,76 @@
   cq('open').onclick=()=>{choiceListOpen=true;renderChoices();};cq('close').onclick=()=>{if(drawerReady)closeDrawer();else{choiceListOpen=false;renderChoices();}};
   cq('filter').onchange=renderChoices;cq('query').oninput=renderChoices;
   const wiredChoices=new WeakSet();
+
+  // Book-attached preview: fixed overlay, no root overflow/scrollbar changes.
+  const introHost=document.createElement('div');introHost.id='fq-intro-host';introHost.hidden=true;
+  introHost.style.cssText='position:fixed;z-index:2147483500;width:500px;max-width:calc(100vw - 24px)';
+  const introRoot=introHost.attachShadow({mode:'open'});
+  introRoot.innerHTML='<style>:host{font:14px/1.7 system-ui,"Microsoft YaHei",sans-serif;color:#333}*{box-sizing:border-box}[hidden]{display:none!important}#frame{height:100%;display:flex;flex-direction:column;background:white;border:1px solid #f1cdb6;border-radius:10px;box-shadow:0 8px 32px #0003;overflow:hidden}header{padding:16px 18px 12px;border-bottom:1px solid #eee;flex-shrink:0}#heading{display:flex;align-items:start;gap:12px}#title{font-size:17px;line-height:1.5;flex:1;min-width:0;margin:0;max-height:76px;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}#meta{font-size:12px;color:#888;margin-top:6px;max-height:42px;overflow:auto;overscroll-behavior:contain}#status{font-size:12px;color:#888;margin-top:6px;min-height:20px}#body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px 18px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85}footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px;border-top:1px solid #eee;flex-shrink:0}button,a{font:inherit}button{border:1px solid #ddd;border-radius:6px;background:white;color:#555;padding:5px 10px;cursor:pointer}button:hover{background:#fff3eb}button:disabled{opacity:.5;cursor:default}button:focus-visible,a:focus-visible,#body:focus-visible{outline:2px solid #ff742b;outline-offset:2px}#later[aria-pressed=true]{background:#fff0e5;color:#e85d16;border-color:#ffbb8f}#retry{padding:0 5px;border:0;color:#d65216}#close{white-space:nowrap;border:0;padding:2px 0}a{color:#a55029;text-decoration:none;margin-left:auto;font-size:12px}</style><section id="frame" role="dialog" aria-labelledby="title"><header><div id="heading"><h2 id="title"></h2><button id="close" aria-label="收起简介">收起 ×</button></div><div id="meta"></div><div id="status" role="status"><span id="status-text"></span><button id="retry" hidden>重试</button></div></header><div id="body" tabindex="0" aria-label="完整简介"></div><footer><button id="later">加入候选</button><button id="skip">不想看</button><button id="clear" hidden>清除标记</button><a id="detail" target="_blank" rel="noopener noreferrer">查看详情 ↗</a></footer></section>';
+  document.body.append(introHost);
+  const iq=id=>introRoot.getElementById(id),introCache=new Map();
+  const introStyle=document.createElement('style');introStyle.textContent='.stack-book-item.fq-intro-card{position:relative!important;overflow:visible!important}.stack-book-item[data-fq-intro-active]{outline:1px solid #ffb782;outline-offset:6px;border-radius:4px}.stack-book-item.fq-intro-card>.fq-choice-actions{position:absolute!important;left:0;top:100%;width:100%;height:34px;display:flex;align-items:center;gap:4px;padding:3px 0!important;box-sizing:border-box;white-space:nowrap}.stack-book-item.fq-intro-card>.fq-choice-actions>.fq-choice-state{display:none}.fq-intro-card .fq-intro-open{margin-right:auto!important;color:#c85520!important;font:12px/1.4 system-ui;cursor:pointer;padding:2px 5px;margin:2px;border:1px solid #edccb9;border-radius:5px;background:#fff9f5}.fq-intro-card .fq-choice-actions button{flex-shrink:0}.fq-intro-card .fq-choice-actions button[hidden]{display:none!important}';document.head.append(introStyle);
+  function introBook(card){const link=card.querySelector('a[href*="/page/"]');const id=link?.getAttribute('href')?.match(/\/page\/(\d+)/)?.[1];return id?{id,title:readText(card.querySelector(TITLE)),abstract:readText(card.querySelector(ABSTRACT)),author:readText(card.querySelector('.book-item-desc')).replace(/^作者[：:]\s*/,''),meta:[...card.querySelectorAll('.book-item-text>.book-item-desc')].filter(el=>!el.matches(ABSTRACT)).slice(0,2).map(readText).join(' · ')}:null;}
+  function positionIntro(){
+    if(!intro)return;const card=intro.card,rect=card.getBoundingClientRect();
+    if(!card.isConnected||card.getAttribute(MARK)==='hide'){closeIntro(false);return;}
+    const minTop=Math.max(12,document.querySelector('.muye-header')?.getBoundingClientRect().bottom||80)+12;
+    if(rect.bottom<minTop||rect.top>innerHeight){closeIntro(false);return;}
+    const width=Math.min(500,innerWidth-24),height=Math.max(180,Math.min(540,innerHeight-minTop-12));
+    let left=rect.right+12;if(left+width>innerWidth-12)left=rect.left-width-12;
+    left=Math.max(12,Math.min(left,innerWidth-width-12));
+    const top=Math.max(minTop,Math.min(rect.top,innerHeight-height-12));
+    introHost.style.left=left+'px';introHost.style.top=top+'px';introHost.style.width=width+'px';introHost.style.height=height+'px';
+  }
+  function updateIntroState(){if(!intro)return;const state=choices.get(intro.book.id)?.state||'none';iq('later').textContent=state==='later'?'已加入候选':'加入候选';iq('later').setAttribute('aria-pressed',String(state==='later'));iq('clear').hidden=state==='none';for(const id of ['later','skip','clear'])iq(id).disabled=!!intro.saving;}
+  async function loadIntro(record,force=false){
+    iq('status-text').textContent='正在核对完整简介…';iq('retry').hidden=true;
+    let cached=introCache.get(record.book.id);
+    try{
+      if(force||!cached||Date.now()-cached.time>600000){
+        const promise=(async()=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);try{const response=await fetch('/page/'+record.book.id,{credentials:'same-origin',cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('请求失败');const doc=new DOMParser().parseFromString(await response.text(),'text/html');const body=doc.querySelector('.page-abstract-content');if(!body||!body.textContent.trim())throw Error('暂无完整简介');return {title:readText(doc.querySelector('h1')).trim()||record.book.title,abstract:readText(body).trim()};}finally{clearTimeout(timer);}})();
+        cached={time:Date.now(),promise};introCache.set(record.book.id,cached);if(introCache.size>60)introCache.delete(introCache.keys().next().value);
+      }
+      const full=await cached.promise;if(intro!==record)return;
+      iq('title').textContent=full.title;iq('body').textContent=full.abstract;iq('status-text').textContent='完整简介';
+    }catch{if(introCache.get(record.book.id)===cached)introCache.delete(record.book.id);if(intro!==record)return;iq('status-text').textContent=record.book.abstract?'核对失败，当前显示列表简介。':'暂时无法取得简介，可打开详情查看。';iq('retry').hidden=false;}
+  }
+  function openIntro(card,button){
+    if(intro?.card===card){closeIntro();return;}closeIntro(false);if(drawerTab)closeDrawer();
+    const book=introBook(card);if(!book)return;
+    const record={book,card,button,saving:false};intro=record;card.setAttribute('data-fq-intro-active','');button.textContent='收起简介';button.setAttribute('aria-expanded','true');
+    iq('title').textContent=book.title;iq('meta').textContent=book.meta;iq('body').textContent=book.abstract||'正在读取简介…';iq('body').scrollTop=0;iq('detail').href='/page/'+book.id;introHost.hidden=false;updateIntroState();positionIntro();iq('close').focus({preventScroll:true});loadIntro(record);
+  }
+  function closeIntro(restoreFocus=true){if(!intro)return;const previous=intro;intro=null;introHost.hidden=true;previous.card.removeAttribute('data-fq-intro-active');previous.button.textContent='展开简介';previous.button.setAttribute('aria-expanded','false');if(restoreFocus&&previous.button.isConnected&&previous.card.getAttribute(MARK)!=='hide')previous.button.focus({preventScroll:true});}
+  function nearbyAnchor(card){const cards=[...document.querySelectorAll('[data-fq-stream] .stack-book-item,.muye-stack-book-list:not([data-fq-native-hidden])>.stack-book-item')].filter(e=>e!==card&&e.getBoundingClientRect().height&&e.getAttribute(MARK)!=='hide');const y=card.getBoundingClientRect().top;const el=cards.sort((a,b)=>Math.abs(a.getBoundingClientRect().top-y)-Math.abs(b.getBoundingClientRect().top-y))[0];return el?{el,top:el.getBoundingClientRect().top}:null;}
+  function preserveNearby(anchor){if(anchor?.el.isConnected){const delta=anchor.el.getBoundingClientRect().top-anchor.top;if(Math.abs(delta)>.5)window.scrollBy(0,delta);}}
+  function introUndo(book,prior){const box=bs.getElementById('intro-notice');box.replaceChildren(document.createTextNode('已设为不想看。'));box.hidden=false;const undo=document.createElement('button');undo.textContent='撤销';undo.onclick=async()=>{undo.disabled=true;const visible=[...document.querySelectorAll('.stack-book-item')].find(e=>e.getBoundingClientRect().top>=80&&e.getBoundingClientRect().height&&e.getAttribute(MARK)!=='hide');const anchor=visible?{el:visible,top:visible.getBoundingClientRect().top}:null;if(await choose(book,prior,{quiet:true})){preserveNearby(anchor);box.hidden=true;}else{undo.disabled=false;box.firstChild.textContent='撤销失败，请重试。';}};const dismiss=document.createElement('button');dismiss.textContent='关闭';dismiss.onclick=()=>box.hidden=true;box.append(undo,dismiss);}
+  async function setIntroChoice(state){
+    const record=intro;if(!record||record.saving)return;record.saving=true;updateIntroState();const prior=choices.get(record.book.id)?.state||'none',anchor=state==='skip'?nearbyAnchor(record.card):null;
+    const saved=await choose(record.book,state,{quiet:true});record.saving=false;
+    if(!saved){if(intro===record){iq('status-text').textContent='保存失败，请重试；原标记未改变。';updateIntroState();}return;}
+    if(state==='skip'){if(intro===record)closeIntro(false);preserveNearby(anchor);introUndo(record.book,prior);}
+    else if(intro===record){updateIntroState();iq('status-text').textContent=state==='later'?'已加入候选':'已清除标记';}
+  }
+  iq('close').onclick=()=>closeIntro();iq('retry').onclick=()=>{if(intro)loadIntro(intro,true);};iq('later').onclick=()=>setIntroChoice('later');iq('skip').onclick=()=>setIntroChoice('skip');iq('clear').onclick=()=>setIntroChoice('none');
+  document.addEventListener('pointerdown',e=>{if(intro&&!e.composedPath().includes(introHost)&&!e.target.closest?.('.fq-intro-open'))closeIntro(false);});
+  introRoot.addEventListener('wheel',e=>{const scroller=e.composedPath().find(el=>['body','title','meta'].includes(el.id));if(!scroller||scroller.scrollHeight<=scroller.clientHeight)e.preventDefault();},{passive:false});
+  introRoot.addEventListener('touchmove',e=>{const scroller=e.composedPath().find(el=>['body','title','meta'].includes(el.id));if(!scroller||scroller.scrollHeight<=scroller.clientHeight)e.preventDefault();},{passive:false});
+  introRoot.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){e.preventDefault();closeIntro();return;}
+    if(e.key==='Tab'){const items=[...introRoot.querySelectorAll('button,a[href],[tabindex="0"]')].filter(el=>!el.disabled&&el.getClientRects().length),index=items.indexOf(introRoot.activeElement);if(items.length){e.preventDefault();items[(index+(e.shiftKey?-1:1)+items.length)%items.length].focus({preventScroll:true});}}
+    if(e.key===' '&&e.target.tagName!=='BUTTON'){e.preventDefault();iq('body').scrollTop+=(e.shiftKey?-1:1)*iq('body').clientHeight*.85;}
+    if(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End'].includes(e.key)){e.preventDefault();const body=iq('body');if(e.key==='Home')body.scrollTop=0;else if(e.key==='End')body.scrollTop=body.scrollHeight;else body.scrollTop+=(e.key.endsWith('Up')?-1:1)*(e.key.startsWith('Arrow')?40:body.clientHeight*.85);}
+  });
+  window.addEventListener('scroll',()=>{if(intro)closeIntro(false);},{passive:true});window.addEventListener('resize',positionIntro);
+
   function attachChoices(card){
     const link=card.querySelector('a[href*="/page/"]'),id=link?.getAttribute('href')?.match(/\/page\/(\d+)/)?.[1];if(!id)return;
     const book={id,title:readText(card.querySelector(TITLE)),abstract:readText(card.querySelector(ABSTRACT)),author:readText(card.querySelector('.book-item-text > .author,.book-item-text > .book-item-desc')).replace(/^作者[：:]\s*/,'')};
-    if(!wiredChoices.has(card)){card.querySelectorAll('.fq-choice-actions').forEach(e=>e.remove());const controls=document.createElement('div');controls.className='fq-choice-actions';controls.style.cssText='font:12px/1.5 system-ui;clear:both;padding:6px 0;position:relative';const badge=document.createElement('span');badge.className='fq-choice-state';controls.append(badge);choiceButtons(book,controls);(card.querySelector('.book-item-text')||card).append(controls);wiredChoices.add(card);}
+    if(!wiredChoices.has(card)){card.querySelectorAll('.fq-choice-actions').forEach(e=>e.remove());const controls=document.createElement('div');controls.className='fq-choice-actions';controls.style.cssText='font:12px/1.5 system-ui;clear:both;padding:6px 0;position:relative';const badge=document.createElement('span');badge.className='fq-choice-state';controls.append(badge);choiceButtons(book,controls);if(card.matches('.stack-book-item')){card.classList.add('fq-intro-card');const expand=document.createElement('button');expand.type='button';expand.className='fq-intro-open';expand.textContent='展开简介';expand.setAttribute('aria-expanded','false');expand.onclick=e=>{e.preventDefault();e.stopPropagation();openIntro(card,expand);};controls.prepend(expand);card.append(controls);}else (card.querySelector('.book-item-text')||card).append(controls);wiredChoices.add(card);}
     const badge=card.querySelector('.fq-choice-state'),text=stateLabel(choices.get(id)?.state);if(badge.textContent!==text)badge.textContent=text;
+    if(card.matches('.stack-book-item')){const state=choices.get(id)?.state||'none';const clear=card.querySelector('[data-choice=none]');clear.hidden=state==='none';clear.textContent='清除';const later=card.querySelector('[data-choice=later]');later.textContent=state==='later'?'已候选':'候选';later.setAttribute('aria-pressed',String(state==='later'));}
+    if(intro?.book.id===id)updateIntroState();
     return id;
   }
   async function refreshChoices(){try{const rows=await historyCall({action:'choices'});const stamp=JSON.stringify(rows);if(stamp!==choiceStamp){choiceStamp=stamp;choices=new Map(rows.map(r=>[r.id,r]));suppressAutoUntil=Date.now()+1500;scan();renderChoices();}}catch{}}
@@ -716,7 +789,7 @@
   }
   function makeStreamCard(book,s) {
     const card=s.template.cloneNode(true);
-    card.removeAttribute(MARK);
+    card.removeAttribute(MARK);card.removeAttribute('data-fq-intro-active');
     // Use textContent for all remote metadata; never execute response markup.
     const title=card.querySelector('.book-item-title');
     title.textContent=book.book_name; title.href='/page/'+book.book_id; title.target='_blank'; title.rel='noopener noreferrer';
@@ -734,7 +807,7 @@
   }
   async function loadStream(manual=false) {
     const s=stream;
-    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||Date.now()<suppressAutoUntil)))return;
+    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||intro||Date.now()<suppressAutoUntil)))return;
     if(s.key!==routeKey())return;
     if(manual){s.empty=0;s.error='';}
     s.loading=true;updateStreamStatus();
@@ -810,6 +883,7 @@
   const bs=filterBar.attachShadow({mode:'open'});
   bs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#333}#bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 8px;background:#fff}button{font:inherit;color:#555;background:#fff;border:1px solid #ddd;border-radius:6px;padding:5px 10px;cursor:pointer}label{white-space:nowrap}input{accent-color:#ff5f16}#summary{font-size:12px;color:#777}#error{color:#a33}#keyword-tags{display:flex;gap:6px;flex-wrap:wrap;padding:0 8px 12px;max-height:84px;overflow:auto;overscroll-behavior:contain}#keyword-tags:empty{display:none}.keyword-tag{background:#fff2e9;color:#a54313;border-radius:5px;padding:2px 8px;overflow-wrap:anywhere;max-width:100%}#words{max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style><div id="bar"><label><input id="enabled" type="checkbox">关键词过滤</label><button id="words"></button><label><input id="abstract" type="checkbox">匹配简介</label><button id="reveal">临时显示隐藏书籍</button><button id="records">屏蔽记录</button><button id="browse">浏览设置</button><span id="summary"></span><span id="error" role="status"></span></div><div id="keyword-tags" role="list" aria-label="当前生效的屏蔽词"></div>';
   const bq=id=>bs.getElementById(id);
+  const introNotice=document.createElement('div');introNotice.id='intro-notice';introNotice.hidden=true;introNotice.style.cssText='position:absolute;top:100%;left:0;padding:8px 12px;background:#fff7ef;border:1px solid #ffd8b9;border-radius:6px;box-shadow:0 4px 12px #0001';bs.append(introNotice);
   const overlayStyle=document.createElement('style');
   overlayStyle.textContent=`
     #fq-drawer[hidden]{display:none!important}
@@ -833,6 +907,7 @@
   const listStyle=document.createElement('style');listStyle.textContent='#box{border:0;padding:16px 0}#box>strong,#close,#filter{display:none!important}#query{padding:9px;border:1px solid #ddd;border-radius:6px;margin:8px 0}#rows>div{padding:14px 0}';cs.append(listStyle);
   for(const [key,label] of [['later','候选'],['skip','不想看'],['rules','关键词规则'],['history','屏蔽记录']]){const button=document.createElement('button');button.textContent=label;button.dataset.tab=key;button.setAttribute('role','tab');button.onclick=()=>openDrawer(key);drawer.querySelector('#fq-drawer-tabs').append(button);}
   function openDrawer(tab){
+    closeIntro(false);
     const opening=!drawerTab;
     if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
     drawerTab=tab;drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
@@ -889,6 +964,7 @@
     bq('reveal').textContent=reveal?'恢复隐藏':'临时显示隐藏书籍';
   }
   function mountFilterBar(){
+    if(intro){if(!supportedPage()||!intro.card.isConnected||intro.card.getAttribute(MARK)==='hide')closeIntro(false);else positionIntro();}
     const anchor=document.querySelector('.muye-stack-book-list:not([data-fq-stream])')||document.querySelector('.rank-book-item')?.parentElement;
     filterBar.hidden=!supportedPage();if(anchor&&filterBar.nextElementSibling!==anchor)anchor.before(filterBar);
     if(!supportedPage()&&!detailBook()&&!/^\/bookshelf(?:\/|$)/.test(location.pathname)&&drawerTab)closeDrawer();

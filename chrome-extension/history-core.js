@@ -1,4 +1,4 @@
-// GPL-3.0-or-later. Shared local history storage logic.
+// GPL-3.0-only. Shared local history storage logic.
 // Shared with the extension service worker. Each book has its own key; writes
   // are serialized by the caller so records/handled marks survive tab races.
   async function historyOperation(storage, message) {

@@ -33,7 +33,9 @@ ${source}
 fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
 fs.writeFileSync(path.join(out,'content.js'),adapter);
 const core = source.split('// HISTORY_CORE_BEGIN')[1].split('// HISTORY_CORE_END')[0].trim()+'\n';
-fs.writeFileSync(path.join(out,'history-core.js'),'// GPL-3.0-or-later. Shared local history storage logic.\n'+core);
+fs.writeFileSync(path.join(out,'history-core.js'),'// GPL-3.0-only. Shared local history storage logic.\n'+core);
 fs.copyFileSync(path.join(__dirname,'history-background.js'),path.join(out,'background.js'));
 fs.copyFileSync(path.join(__dirname,'LICENSE.txt'),path.join(out,'LICENSE.txt'));
 console.log('Built extension:',out);
+
+fs.copyFileSync(path.join(__dirname,'第三方来源与许可.md'),path.join(out,'第三方来源与许可.md'));
