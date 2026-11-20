@@ -13,7 +13,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.6.0
+// @version      1.6.1
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -203,14 +203,19 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.6.0</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.6.1</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
       <label><input id="enabled" type="checkbox"> 启用屏蔽</label>
       <label><input id="abstract" type="checkbox"> 同时检查简介（更少漏网，可能误伤）</label>
-      <label for="words">屏蔽词 · 每行一个</label>
-      <textarea id="words" spellcheck="false"></textarea>
+      <label>屏蔽词 <span id="word-count"></span></label>
+      <div id="word-tags" role="list" aria-label="待保存的屏蔽词"></div>
+      <label for="words">添加屏蔽词 · 支持一次输入多个</label>
+      <textarea id="words" spellcheck="false" placeholder="例如：原神、崩铁，鸣潮；绝区零" aria-describedby="word-help word-preview"></textarea>
+      <p id="word-help">用换行、逗号（,，）、顿号（、）、分号（;；）或制表符分隔；词内空格保留。</p>
+      <div class="row"><button id="word-add">加入词表</button><span id="word-preview" role="status"></span></div>
+      <p id="word-feedback" role="status">修改后点击“保存并应用”；尚未加入词表的输入也会一并保存。</p>
       <p>命中任一词即隐藏整本书。支持空格、全角数字和标点变体；不按作者名匹配。只处理当前页面已加载的书籍。</p>
       <div class="row"><button id="save">保存并应用</button><button id="close">关闭</button></div>
       <div class="row"><button id="reveal">临时显示已屏蔽</button><button id="reset">填入默认词表</button></div>
@@ -234,6 +239,25 @@
     <button id="open" aria-expanded="false">关键词屏蔽</button>`;
   document.body.append(host);
   const $ = id => shadow.getElementById(id);
+  const oldSaveRow=$('save').parentElement;$('word-add').parentElement.append($('save'),$('close'));oldSaveRow.remove();
+  let wordDraft=[];
+  function parsedWordInput(){
+    const seen=new Set();return $('words').value.split(/[\r\n,，、;；\t]+/).map(w=>w.trim()).filter(w=>{const key=normalize(w);if(!key||seen.has(key))return false;seen.add(key);return true;});
+  }
+  function pendingWords(){const existing=new Set(wordDraft.map(normalize));return parsedWordInput().filter(w=>!existing.has(normalize(w)));}
+  function previewWords(){const count=pendingWords().length;$('word-preview').textContent=$('words').value.trim()?(count?'可新增 '+count+' 个词':'没有新词，重复或无效内容会忽略'):'';}
+  function renderWordTags(){
+    $('word-count').textContent='· '+wordDraft.length+' 个';
+    const fragment=document.createDocumentFragment();
+    wordDraft.forEach((word,index)=>{const tag=document.createElement('span');tag.className='word-tag';tag.setAttribute('role','listitem');const text=document.createElement('span');text.textContent=word;tag.append(text);const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label','删除屏蔽词：'+word);remove.onclick=()=>{wordDraft.splice(index,1);renderWordTags();$('word-feedback').textContent='已移除“'+word+'”，保存后生效。';const buttons=$('word-tags').querySelectorAll('button');(buttons[Math.min(index,buttons.length-1)]||$('words')).focus({preventScroll:true});};tag.append(remove);fragment.append(tag);});
+    if(!wordDraft.length){const empty=document.createElement('span');empty.textContent='暂无屏蔽词';empty.className='empty-words';fragment.append(empty);}
+    $('word-tags').replaceChildren(fragment);previewWords();
+  }
+  function resetWordDraft(){wordDraft=config.words.slice();$('words').value='';$('word-feedback').textContent='修改后点击“保存并应用”；尚未加入词表的输入也会一并保存。';renderWordTags();}
+  function addWordInput(){const additions=pendingWords();wordDraft.push(...additions);$('words').value='';renderWordTags();$('word-feedback').textContent=additions.length?'已加入 '+additions.length+' 个词，保存后生效。':'没有新增词，重复或无效内容已忽略。';}
+  $('words').oninput=previewWords;
+  $('words').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'&&!e.isComposing){e.preventDefault();addWordInput();}});
+  $('word-add').onclick=()=>{addWordInput();$('words').focus({preventScroll:true});};
   function showHistory(show) {
     historyView = show;
     $('settings-view').hidden = show;
@@ -328,7 +352,7 @@
   }
   function openPanel() {
     if(drawerReady){openDrawer('rules');return;}
-    $('words').value = config.words.join('\n');
+    resetWordDraft();
     $('enabled').checked = config.enabled;
     $('abstract').checked = config.abstract;
     $('panel').hidden = false;
@@ -344,15 +368,17 @@
   $('close').onclick = closePanel;
   $('panel').addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
   $('save').onclick = async () => {
-    const words = [...new Set($('words').value.split(/[\n,，;；]+/).map(x => x.trim()).filter(x => normalize(x)))];
+    addWordInput();
+    const words = wordDraft.slice();
     const next = {words, enabled:$('enabled').checked, abstract:$('abstract').checked};
     try { await GM_setValue(STORE, next); }
-    catch { $('warning').textContent = '保存失败，请检查油猴权限后重试。'; return; }
+    catch { $('word-feedback').textContent = '保存失败，请重试；词表草稿已保留。'; return; }
     config = next;
+    $('word-feedback').textContent='已保存并应用 '+words.length+' 个屏蔽词。';
     reveal = false;
     scan();
   };
-  $('reset').onclick = () => { $('words').value = DEFAULT_WORDS.join('\n'); };
+  $('reset').onclick = () => { wordDraft=DEFAULT_WORDS.slice();$('words').value='';renderWordTags();$('word-feedback').textContent='已填入默认词表，保存后生效。'; };
   $('reveal').onclick = () => { reveal = !reveal; scan(); };
   GM_registerMenuCommand('番茄小说：编辑屏蔽词', () => { if (supportedPage()) openPanel(); else alert('请在番茄小说的「书库」或「排行榜」页面设置屏蔽词。'); });
 
@@ -642,7 +668,7 @@
   const filterBar=document.createElement('div');filterBar.id='fq-filter-bar';
   filterBar.style.cssText='position:sticky;top:80px;z-index:100;background:white;max-width:1160px;margin:16px auto;border-bottom:1px solid #eee';
   const bs=filterBar.attachShadow({mode:'open'});
-  bs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#333}#bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 8px;background:#fff}button{font:inherit;color:#555;background:#fff;border:1px solid #ddd;border-radius:6px;padding:5px 10px;cursor:pointer}label{white-space:nowrap}input{accent-color:#ff5f16}#summary{font-size:12px;color:#777}#error{color:#a33}#words{max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style><div id="bar"><label><input id="enabled" type="checkbox">关键词过滤</label><button id="words"></button><label><input id="abstract" type="checkbox">匹配简介</label><button id="reveal">临时显示隐藏书籍</button><button id="records">屏蔽记录</button><button id="browse">浏览设置</button><span id="summary"></span><span id="error" role="status"></span></div>';
+  bs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#333}#bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 8px;background:#fff}button{font:inherit;color:#555;background:#fff;border:1px solid #ddd;border-radius:6px;padding:5px 10px;cursor:pointer}label{white-space:nowrap}input{accent-color:#ff5f16}#summary{font-size:12px;color:#777}#error{color:#a33}#keyword-tags{display:flex;gap:6px;flex-wrap:wrap;padding:0 8px 12px;max-height:84px;overflow:auto;overscroll-behavior:contain}#keyword-tags:empty{display:none}.keyword-tag{background:#fff2e9;color:#a54313;border-radius:5px;padding:2px 8px;overflow-wrap:anywhere;max-width:100%}#words{max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style><div id="bar"><label><input id="enabled" type="checkbox">关键词过滤</label><button id="words"></button><label><input id="abstract" type="checkbox">匹配简介</label><button id="reveal">临时显示隐藏书籍</button><button id="records">屏蔽记录</button><button id="browse">浏览设置</button><span id="summary"></span><span id="error" role="status"></span></div><div id="keyword-tags" role="list" aria-label="当前生效的屏蔽词"></div>';
   const bq=id=>bs.getElementById(id);
   const overlayStyle=document.createElement('style');
   overlayStyle.textContent=`
@@ -663,7 +689,7 @@
   document.body.append(drawer);
   const drawerBody=drawer.querySelector('#fq-drawer-body');drawerBody.append(choiceHost,host);
   host.style.cssText='display:none';choiceHost.style.cssText='display:none';
-  const ruleStyle=document.createElement('style');ruleStyle.textContent='#open,h2,#history-back,#history-close,#close{display:none!important}#panel,#panel[data-view=history]{width:100%;max-height:none;overflow:visible;border:0;box-shadow:none;background:white;padding:16px 0;margin:0}#history-list{max-height:none;overflow:visible}#save{background:#ff5f16;border-color:#ff5f16}input{accent-color:#ff5f16}textarea{overscroll-behavior:contain}#history-open{display:none}';shadow.append(ruleStyle);
+  const ruleStyle=document.createElement('style');ruleStyle.textContent='#open,h2,#history-back,#history-close,#close{display:none!important}#panel,#panel[data-view=history]{width:100%;max-height:none;overflow:visible;border:0;box-shadow:none;background:white;padding:16px 0;margin:0}#history-list{max-height:none;overflow:visible}#save{background:#ff5f16;border-color:#ff5f16}input{accent-color:#ff5f16}textarea{overscroll-behavior:contain}#history-open{display:none}#word-tags{display:flex;flex-wrap:wrap;gap:8px;max-height:180px;overflow:auto;overscroll-behavior:contain;padding:3px}.word-tag{display:inline-flex;align-items:center;gap:8px;background:#fff2e9;border:1px solid #ffdcc3;border-radius:6px;padding:4px 8px;color:#a54313;max-width:100%;overflow-wrap:anywhere}.word-tag button{border:0;background:transparent;color:#a54313;padding:0 4px;line-height:24px}.word-tag button:hover{background:#ffddc7}#words{height:86px}#word-preview,#word-feedback,.empty-words{font-size:13px;color:#777}';shadow.append(ruleStyle);
   const listStyle=document.createElement('style');listStyle.textContent='#box{border:0;padding:16px 0}#box>strong,#close,#filter{display:none!important}#query{padding:9px;border:1px solid #ddd;border-radius:6px;margin:8px 0}#rows>div{padding:14px 0}';cs.append(listStyle);
   for(const [key,label] of [['later','待看'],['skip','不想看'],['rules','关键词规则'],['history','屏蔽记录']]){const button=document.createElement('button');button.textContent=label;button.dataset.tab=key;button.setAttribute('role','tab');button.onclick=()=>openDrawer(key);drawer.querySelector('#fq-drawer-tabs').append(button);}
   function openDrawer(tab){
@@ -672,7 +698,7 @@
     drawerTab=tab;drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
     drawer.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
     if(choiceListOpen){cq('filter').value=tab;renderChoices();}
-    else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='rules'&&!drawerRulesLoaded){$('words').value=config.words.join('\n');$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
+    else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='rules'&&!drawerRulesLoaded){resetWordDraft();$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
     drawerBody.scrollTop=0;
     if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});
   }
@@ -714,7 +740,9 @@
     try{await GM_setValue(STORE,next);config=next;bq('error').textContent='';scan();}
     catch{bq(field).checked=config[field];bq('error').textContent='保存失败，请重试';}finally{bq(field).disabled=false;}
   };
+  let displayedWordSignature='';
   function updateFilterBar(total,hits){
+    const signature=JSON.stringify(config.words);if(signature!==displayedWordSignature){displayedWordSignature=signature;const tags=config.words.map(word=>{const tag=document.createElement('span');tag.className='keyword-tag';tag.setAttribute('role','listitem');tag.textContent=word;return tag;});bq('keyword-tags').replaceChildren(...tags);}
     bq('enabled').checked=config.enabled;bq('abstract').checked=config.abstract;
     bq('words').title=config.words.join('、');const words='屏蔽词 '+config.words.length+' 个 · 编辑';if(bq('words').textContent!==words)bq('words').textContent=words;
     const summary='已加载 '+total+' 本 · '+(reveal?'命中':'隐藏')+' '+hits+' 本';if(bq('summary').textContent!==summary)bq('summary').textContent=summary;
