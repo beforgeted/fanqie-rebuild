@@ -21,6 +21,16 @@ const cards=()=>[...w.document.querySelectorAll('[data-fq-stream] .stack-book-it
  assert.equal(cards()[1].getAttribute('data-fq-keyword-blocked'),'hide');
  assert.ok(values['fq-history-book-100002']);
  more().click();await until(()=>!more().disabled);assert.equal(cards().length,3,'dedup across pages');
+ // Changing a profile reuses the accumulated stream and its exact card nodes.
+ const streamNode=w.document.querySelector('[data-fq-stream]'),cardNodes=cards();
+ const profileUI=w.document.getElementById('fq-keyword-filter-host').shadowRoot;
+ w.document.getElementById('fq-filter-bar').shadowRoot.getElementById('words').click();
+ profileUI.getElementById('profile-new-name').value='无限滚动测试';await profileUI.getElementById('profile-empty').onclick();
+ assert.equal(w.document.querySelector('[data-fq-stream]'),streamNode);assert.deepEqual(cards(),cardNodes);
+ assert.equal(cards()[1].getAttribute('data-fq-keyword-blocked'),null,'empty profile reveals accumulated book');
+ profileUI.getElementById('profile-select').value='default';await profileUI.getElementById('profile-select').onchange();
+ assert.equal(cards()[1].getAttribute('data-fq-keyword-blocked'),'hide');assert.deepEqual(cards(),cardNodes);
+ w.document.getElementById('fq-drawer-close').click();
  reply=async()=>{throw Error('模拟网络异常');};more().click();await until(()=>controls().textContent.includes('加载失败'));
  assert.equal(cards().length,3,'failure retains existing books');
  reply=async()=>({code:0,data:{book_list:[book('100004','新书')],has_more:false}});

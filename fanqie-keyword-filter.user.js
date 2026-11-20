@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.9.2
+// @version      1.10.0
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -39,6 +39,14 @@
   // Shared with the extension service worker. Each book has its own key; writes
   // are serialized by the caller so records/handled marks survive tab races.
   async function historyOperation(storage, message) {
+    if(message.action==='filterRead'||message.action==='filterSave'){
+      const key='fq-keyword-filter-v1',state=filterState(await storage.get(key));
+      if(message.action==='filterRead')return state;
+      if(message.revision!==state.revision)return {conflict:true,state};
+      if(message.state?.schema!==2)throw Error('无效的筛选设置');
+      const next=filterState(message.state);next.revision=state.revision+1;
+      await storage.set({[key]:next});return {state:next};
+    }
     if(message.action==='syncList'||message.action==='syncSave'){
       if(!/^\d{1,30}$/.test(message.accountId||''))throw Error('无效账号');
       const prefix='fq-official-sync-'+message.accountId+'-';
@@ -108,6 +116,36 @@
     }
     throw new Error('无效的记录操作');
   }
+  function filterNormalize(text){return text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\u200b-\u200d\ufeff]/gu,'');}
+  function profileWords(profile){
+    const seen=new Set();return profile.groups.filter(g=>g.enabled).flatMap(g=>g.words).filter(word=>{const key=filterNormalize(word);if(!key||seen.has(key))return false;seen.add(key);return true;});
+  }
+  function filterState(raw){
+    if(raw?.schema===2){
+      if(!Array.isArray(raw.profiles)||!raw.profiles.length||raw.profiles.length>30)throw Error('无效方案');
+      const ids=new Set(),names=new Set();
+      const profiles=raw.profiles.map(p=>{
+        if(typeof p.id!=='string'||!p.id||ids.has(p.id)||p.id.length>100||typeof p.name!=='string'||!p.name.trim()||p.name.length>60||names.has(p.name.trim()))throw Error('方案名称或标识重复');
+        ids.add(p.id);names.add(p.name.trim());
+        if(!Array.isArray(p.groups)||!p.groups.length||p.groups.length>100)throw Error('无效分组');
+        const gids=new Set(),gnames=new Set();let count=0;
+        const groups=p.groups.map(g=>{
+          if(typeof g.id!=='string'||!g.id||gids.has(g.id)||g.id.length>100||typeof g.name!=='string'||!g.name.trim()||g.name.length>60||gnames.has(g.name.trim())||!Array.isArray(g.words))throw Error('分组名称或标识重复');
+          gids.add(g.id);gnames.add(g.name.trim());count+=g.words.length;
+          if(count>10000||g.words.some(w=>typeof w!=='string'||w.length>200||!filterNormalize(w)))throw Error('屏蔽词无效或过多');
+          return {id:g.id,name:g.name.trim(),enabled:g.enabled!==false,words:g.words.slice()};
+        });
+        return {id:p.id,name:p.name.trim(),enabled:p.enabled!==false,abstract:p.abstract!==false,groups};
+      });
+      const active=profiles.find(p=>p.id===raw.activeId);if(!active)throw Error('当前方案不存在');
+      return {schema:2,revision:Number.isSafeInteger(raw.revision)&&raw.revision>=0?raw.revision:0,activeId:active.id,profiles,words:profileWords(active),enabled:active.enabled,abstract:active.abstract};
+    }
+    const words=Array.isArray(raw?.words)?raw.words.filter(w=>typeof w==='string'&&filterNormalize(w)):['原神','崩铁','星穹铁道','星铁','崩坏3','崩坏三','绝区零','鸣潮'];
+    const profile={id:'default',name:'默认方案',enabled:raw?.enabled!==false,abstract:raw?.abstract!==false,groups:[{id:'original',name:'原有词表',enabled:true,words}]};
+    return {schema:2,revision:0,activeId:profile.id,profiles:[profile],words:profileWords(profile),enabled:profile.enabled,abstract:profile.abstract};
+  }
+  function compileFilterWords(words){const entries=words.map(word=>({word,key:filterNormalize(word)})).filter(e=>e.key);return fields=>{const texts=fields.map(filterNormalize);return entries.filter(e=>texts.some(text=>text.includes(e.key))).map(e=>e.word);};}
+
   // HISTORY_CORE_END
 
   // OFFICIAL_CORE_BEGIN
@@ -214,18 +252,15 @@
       '也W用方子英每理便四数期中C外样a海们任'
     ].join('')
   };
-  const saved = GM_getValue(STORE, {});
-  let config = {
-    words: Array.isArray(saved?.words) ? saved.words.filter(x => typeof x === 'string' && x.trim()) : DEFAULT_WORDS.slice(),
-    enabled: saved?.enabled !== false,
-    abstract: saved?.abstract !== false
-  };
+  let profileState=filterState(GM_getValue(STORE, {}));
+  let config={words:profileState.words,enabled:profileState.enabled,abstract:profileState.abstract};
+  let matchFilterWords=compileFilterWords(config.words);
   let drawerReady=false,drawerTab=null,drawer=null,drawerReturn=null,drawerRulesLoaded=false;
   let intro=null;
   let reveal = false;
   let timer;
   let lastPath = location.pathname + location.search;
-  const normalize = text => text.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\u200b-\u200d\ufeff]/gu, '');
+  const normalize = filterNormalize;
   const supportedPage = () => /^\/(?:library|rank)(?:\/|$)/.test(location.pathname);
 
   function readText(element) {
@@ -275,7 +310,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.9.2</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.10.0</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -313,6 +348,94 @@
   const $ = id => shadow.getElementById(id);
   const oldSaveRow=$('save').parentElement;$('word-add').parentElement.append($('save'),$('close'));oldSaveRow.remove();
   let wordDraft=[];
+  const cloneProfile=value=>JSON.parse(JSON.stringify(value));
+  const newRuleId=()=>crypto.randomUUID?.()||'rule-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+  let profileDraft=null,draftRevision=0,draftBaseline='',selectedGroup='',selectedWords=new Set(),profileBusy=false,pendingProfile='';
+  const currentProfile=()=>profileState.profiles.find(p=>p.id===profileState.activeId);
+  const currentGroup=()=>profileDraft.groups.find(g=>g.id===selectedGroup)||profileDraft.groups[0];
+  const manager=document.createElement('section');manager.id='profile-manager';
+  manager.innerHTML='<div class="profile-toolbar"><label>选书方案 <select id="profile-select" aria-label="当前选书方案"></select></label><label>名称 <input id="profile-name" maxlength="60" aria-label="方案名称"></label><button id="profile-delete">删除方案</button></div><details id="profile-create"><summary>新建或复制方案</summary><div class="profile-toolbar"><input id="profile-new-name" maxlength="60" placeholder="新方案名称，例如动漫衍生" aria-label="新方案名称"><button id="profile-copy">复制当前设置</button><button id="profile-empty">新建空白方案</button></div></details><p id="profile-message" role="status"></p><button id="profile-latest" hidden>放弃草稿，载入最新设置</button><div id="profile-confirm" hidden><span id="profile-confirm-text"></span><div class="row"><button id="profile-save-switch">保存并切换</button><button id="profile-discard-switch">放弃修改并切换</button><button id="profile-cancel">取消</button></div></div><div id="profile-delete-confirm" hidden><span>仅删除此选书方案，候选和屏蔽记录会保留。</span><button id="profile-delete-yes">确认删除</button><button id="profile-delete-no">取消</button></div>';
+  $('warning').after(manager);
+  const profileToggles=document.createElement('div');profileToggles.className='profile-toolbar profile-toggles';$('enabled').parentElement.before(profileToggles);profileToggles.append($('enabled').parentElement,$('abstract').parentElement);
+  const groupBar=document.createElement('section');groupBar.id='group-bar';
+  groupBar.innerHTML='<div class="profile-toolbar"><label>词组 <select id="group-select" aria-label="当前关键词分组"></select></label><label><input type="checkbox" id="group-enabled">启用此组</label><label>组名 <input id="group-name" maxlength="60" aria-label="分组名称"></label><button id="group-add">新建分组</button><button id="group-delete">删除空组</button></div><p>同组任意一个词命中即屏蔽。停用的词组仍会保留，保存后生效。</p>';
+  $('word-tags').before(groupBar);
+  const moveBar=document.createElement('div');moveBar.className='profile-toolbar';moveBar.id='word-move-bar';
+  moveBar.innerHTML='<span id="word-selected">勾选词标签可移动分组</span><select id="word-target" aria-label="移入哪个分组"></select><button id="word-move">移动勾选词</button>';
+  $('word-tags').after(moveBar);
+  $('save').parentElement.classList.add('rule-save-row');
+  const profileStyle=document.createElement('style');profileStyle.textContent='#profile-manager{padding:10px 12px;background:#fff9f4;border:1px solid #f0e1d6;border-radius:8px;margin:10px 0}.profile-toolbar{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}.profile-toolbar label{display:flex;align-items:center;gap:6px;margin:0}.profile-toolbar input:not([type=checkbox]),.profile-toolbar select{font:inherit;max-width:240px;min-width:100px;padding:5px 8px;border:1px solid #ddd2c9;border-radius:6px;background:white;color:#4b4037}.profile-toolbar button{padding:5px 10px;font-size:13px}#profile-create{margin-top:8px}#profile-create summary{cursor:pointer;font-size:12px;color:#9d623f}#profile-create .profile-toolbar{margin-top:8px}#profile-message:empty{display:none}#profile-message{color:#a34222}#profile-confirm,#profile-delete-confirm{padding:8px;border-top:1px solid #e8dace;margin-top:8px}#group-bar{border-top:1px solid #eee2d8;padding:12px 0 4px}#group-name{width:160px}#word-move-bar{font-size:12px;margin:10px 0;color:#897363}#word-move-bar select{font-size:12px}#word-tags .word-tag input{margin:0;cursor:pointer}#profile-latest{margin-top:4px;font-size:12px}.profile-toggles{margin:12px 0}.profile-toolbar{font-size:13px}.rule-save-row{position:sticky;bottom:-20px;background:#fff;padding:10px 0;border-top:1px solid #eee3da;z-index:2}button:disabled{opacity:.45;cursor:default}#settings-view>label{margin:6px 0}#group-bar{padding-top:8px}#profile-manager{padding:8px 12px}';shadow.append(profileStyle);
+  function profileOptions(select,items,value){select.replaceChildren(...items.map(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.name;return o;}));select.value=value;}
+  function captureProfileDraft(){
+    if(!profileDraft)return;
+    profileDraft.name=$('profile-name').value.trim();profileDraft.enabled=$('enabled').checked;profileDraft.abstract=$('abstract').checked;
+    const group=currentGroup();group.name=$('group-name').value.trim();group.enabled=$('group-enabled').checked;group.words=wordDraft;
+  }
+  function profileDirty(){if(!drawerRulesLoaded||!profileDraft)return false;captureProfileDraft();return JSON.stringify(profileDraft)!==draftBaseline||!!$('words').value.trim();}
+  function renderGroupEditor(){
+    const group=currentGroup();selectedGroup=group.id;wordDraft=group.words;selectedWords.clear();
+    profileOptions($('group-select'),profileDraft.groups.map(g=>({...g,name:g.name+(g.enabled?'':'（已停用）')})),group.id);
+    $('group-name').value=group.name;$('group-enabled').checked=group.enabled;
+    profileOptions($('word-target'),profileDraft.groups.filter(g=>g.id!==group.id),profileDraft.groups.find(g=>g.id!==group.id)?.id||'');
+    $('group-delete').disabled=profileDraft.groups.length<=1;$('word-move-bar').hidden=profileDraft.groups.length<2;
+    renderWordTags();updateMoveSelection();
+  }
+  function updateMoveSelection(){$('word-selected').textContent=selectedWords.size?'已勾选 '+selectedWords.size+' 个词':'勾选词标签可移动分组';$('word-move').disabled=!selectedWords.size||profileDraft.groups.length<2;}
+  function resetProfileEditor(){
+    const previousGroup=profileDraft?.id===profileState.activeId?selectedGroup:null;
+    profileDraft=cloneProfile(currentProfile());draftRevision=profileState.revision;draftBaseline=JSON.stringify(profileDraft);selectedGroup=profileDraft.groups.some(g=>g.id===previousGroup)?previousGroup:profileDraft.groups[0].id;
+    profileOptions($('profile-select'),profileState.profiles,profileState.activeId);$('profile-name').value=profileDraft.name;$('enabled').checked=profileDraft.enabled;$('abstract').checked=profileDraft.abstract;
+    $('profile-delete').disabled=profileState.profiles.length<=1;$('profile-confirm').hidden=true;$('profile-delete-confirm').hidden=true;$('profile-latest').hidden=true;$('profile-message').textContent='';$('words').value='';
+    renderGroupEditor();$('word-feedback').textContent='修改仅作用于当前方案；点击“保存并应用”生效。';
+  }
+  function applyProfileState(next){if(next.revision<profileState.revision)return;profileState=filterState(next);config={words:profileState.words,enabled:profileState.enabled,abstract:profileState.abstract};matchFilterWords=compileFilterWords(config.words);}
+  async function persistProfiles(next,revision=profileState.revision){
+    if(profileBusy)throw Error('正在保存，请稍后再试。');profileBusy=true;$('settings-view').inert=true;if(drawerReady)bq('bar').inert=true;
+    try{
+      const clean=filterState(next),result=await historyCall({action:'filterSave',state:clean,revision});
+      if(result.conflict){applyProfileState(result.state);scan();$('profile-latest').hidden=false;throw Error('另一页已修改方案；草稿已保留，请载入最新设置后再编辑。');}
+      applyProfileState(result.state);reveal=false;scan();renderChoices();return true;
+    }finally{profileBusy=false;$('settings-view').inert=false;if(drawerReady)bq('bar').inert=false;}
+  }
+  function stateWithDraft(){captureProfileDraft();const next=cloneProfile(profileState);if(!next.profiles.some(p=>p.id===profileDraft.id))throw Error('此方案已被另一页删除，草稿仍在。');next.profiles=next.profiles.map(p=>p.id===profileDraft.id?cloneProfile(profileDraft):p);return next;}
+  async function saveProfileDraft(targetId){
+    addWordInput();const next=stateWithDraft();if(targetId)next.activeId=targetId;
+    await persistProfiles(next,draftRevision);resetWordDraft();$('profile-message').textContent=targetId?'已保存并切换方案。':'已保存当前方案。';
+  }
+  async function switchProfile(id,discard=false){
+    if(!profileState.profiles.some(p=>p.id===id))return;
+    if(id===profileState.activeId&&!discard)return;
+    if(!discard&&profileDirty()){
+      pendingProfile=id;openDrawer('rules');$('profile-select').value=profileState.activeId;$('profile-confirm').hidden=false;$('profile-confirm-text').textContent='当前方案有未保存修改。切换前请选择：';return;
+    }
+    try{const next=cloneProfile(profileState);next.activeId=id;await persistProfiles(next);resetWordDraft();$('profile-message').textContent='已切换方案，当前书流已重新筛选。';}
+    catch(error){$('profile-message').textContent='切换失败：'+error.message;if(drawerReady)bq('error').textContent='切换失败：'+error.message;}
+    finally{$('profile-select').value=profileState.activeId;if(drawerReady)bq('profile-quick').value=profileState.activeId;}
+  }
+  $('profile-select').onchange=()=>switchProfile($('profile-select').value);
+  $('profile-save-switch').onclick=async()=>{try{await saveProfileDraft(pendingProfile);}catch(error){$('profile-message').textContent='保存失败：'+error.message;}};
+  $('profile-discard-switch').onclick=()=>switchProfile(pendingProfile,true);
+  $('profile-cancel').onclick=()=>{$('profile-confirm').hidden=true;pendingProfile='';};
+  $('profile-latest').onclick=()=>{resetWordDraft();};
+  async function createProfile(empty){
+    const name=$('profile-new-name').value.trim();if(!name){$('profile-message').textContent='请先填写新方案名称。';return;}
+    try{
+      if(profileDirty()&&empty){$('profile-message').textContent='当前修改尚未保存，请先保存，或复制当前设置为新方案。';return;}
+      addWordInput();captureProfileDraft();const p=empty?{id:newRuleId(),name,enabled:true,abstract:true,groups:[{id:newRuleId(),name:'未分组',enabled:true,words:[]}]}:{...cloneProfile(profileDraft),id:newRuleId(),name};
+      const next=cloneProfile(profileState);next.profiles.push(p);next.activeId=p.id;await persistProfiles(next,draftRevision);resetWordDraft();$('profile-new-name').value='';$('profile-create').open=false;$('profile-message').textContent='已创建并启用“'+name+'”，原方案保持不变。';
+    }catch(error){$('profile-message').textContent='创建失败：'+error.message;}
+  }
+  $('profile-copy').onclick=()=>createProfile(false);$('profile-empty').onclick=()=>createProfile(true);
+  $('profile-delete').onclick=()=>{$('profile-delete-confirm').hidden=false;};$('profile-delete-no').onclick=()=>{$('profile-delete-confirm').hidden=true;};
+  $('profile-delete-yes').onclick=async()=>{
+    try{const next=cloneProfile(profileState);next.profiles=next.profiles.filter(p=>p.id!==profileDraft.id);next.activeId=next.profiles[0]?.id;await persistProfiles(next,draftRevision);resetWordDraft();$('profile-message').textContent='已删除方案，候选和屏蔽记录保持不变。';}
+    catch(error){$('profile-message').textContent='删除失败：'+error.message;}
+  };
+  $('group-select').onchange=()=>{addWordInput();captureProfileDraft();selectedGroup=$('group-select').value;renderGroupEditor();};
+  $('group-add').onclick=()=>{addWordInput();captureProfileDraft();let n=1;while(profileDraft.groups.some(g=>g.name==='新分组 '+n))n++;const group={id:newRuleId(),name:'新分组 '+n,enabled:true,words:[]};profileDraft.groups.push(group);selectedGroup=group.id;renderGroupEditor();$('group-name').focus({preventScroll:true});$('group-name').select();};
+  $('group-delete').onclick=()=>{addWordInput();captureProfileDraft();if(currentGroup().words.length){$('word-feedback').textContent='请先把此组的词移动到其他分组，或逐词删除；只允许删除空组。';return;}if(profileDraft.groups.length<=1)return;profileDraft.groups=profileDraft.groups.filter(g=>g.id!==selectedGroup);selectedGroup=profileDraft.groups[0].id;renderGroupEditor();};
+  $('word-move').onclick=()=>{captureProfileDraft();const target=profileDraft.groups.find(g=>g.id===$('word-target').value);if(!target||target.id===selectedGroup)return;const seen=new Set(target.words.map(normalize));for(const word of wordDraft)if(selectedWords.has(word)&&!seen.has(normalize(word))){target.words.push(word);seen.add(normalize(word));}currentGroup().words=wordDraft.filter(w=>!selectedWords.has(w));renderGroupEditor();$('word-feedback').textContent='已移动到“'+target.name+'”，保存后生效。';};
+
   function parsedWordInput(){
     const seen=new Set();return $('words').value.split(/[\r\n,，、;；\t]+/).map(w=>w.trim()).filter(w=>{const key=normalize(w);if(!key||seen.has(key))return false;seen.add(key);return true;});
   }
@@ -321,11 +444,11 @@
   function renderWordTags(){
     $('word-count').textContent='· '+wordDraft.length+' 个';
     const fragment=document.createDocumentFragment();
-    wordDraft.forEach((word,index)=>{const tag=document.createElement('span');tag.className='word-tag';tag.setAttribute('role','listitem');const text=document.createElement('span');text.textContent=word;tag.append(text);const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label','删除屏蔽词：'+word);remove.onclick=()=>{wordDraft.splice(index,1);renderWordTags();$('word-feedback').textContent='已移除“'+word+'”，保存后生效。';const buttons=$('word-tags').querySelectorAll('button');(buttons[Math.min(index,buttons.length-1)]||$('words')).focus({preventScroll:true});};tag.append(remove);fragment.append(tag);});
+    wordDraft.forEach((word,index)=>{const tag=document.createElement('span');tag.className='word-tag';tag.setAttribute('role','listitem');const text=document.createElement('span');text.textContent=word;const check=document.createElement('input');check.type='checkbox';check.checked=selectedWords.has(word);check.setAttribute('aria-label','选择屏蔽词：'+word);check.onchange=()=>{if(check.checked)selectedWords.add(word);else selectedWords.delete(word);updateMoveSelection();};tag.append(check,text);const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label','删除屏蔽词：'+word);remove.onclick=()=>{selectedWords.delete(word);wordDraft.splice(index,1);renderWordTags();updateMoveSelection();$('word-feedback').textContent='已移除“'+word+'”，保存后生效。';const buttons=$('word-tags').querySelectorAll('button');(buttons[Math.min(index,buttons.length-1)]||$('words')).focus({preventScroll:true});};tag.append(remove);fragment.append(tag);});
     if(!wordDraft.length){const empty=document.createElement('span');empty.textContent='暂无屏蔽词';empty.className='empty-words';fragment.append(empty);}
     $('word-tags').replaceChildren(fragment);previewWords();
   }
-  function resetWordDraft(){wordDraft=config.words.slice();$('words').value='';$('word-feedback').textContent='修改后点击“保存并应用”；尚未加入词表的输入也会一并保存。';renderWordTags();}
+  function resetWordDraft(){resetProfileEditor();}
   function addWordInput(){const additions=pendingWords();wordDraft.push(...additions);$('words').value='';renderWordTags();$('word-feedback').textContent=additions.length?'已加入 '+additions.length+' 个词，保存后生效。':'没有新增词，重复或无效内容已忽略。';}
   $('words').oninput=previewWords;
   $('words').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'&&!e.isComposing){e.preventDefault();addWordInput();}});
@@ -440,17 +563,10 @@
   $('close').onclick = closePanel;
   $('panel').addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
   $('save').onclick = async () => {
-    addWordInput();
-    const words = wordDraft.slice();
-    const next = {words, enabled:$('enabled').checked, abstract:$('abstract').checked};
-    try { await GM_setValue(STORE, next); }
-    catch { $('word-feedback').textContent = '保存失败，请重试；词表草稿已保留。'; return; }
-    config = next;
-    $('word-feedback').textContent='已保存并应用 '+words.length+' 个屏蔽词。';
-    reveal = false;
-    scan();
+    try{await saveProfileDraft();$('word-feedback').textContent='已保存并应用 '+config.words.length+' 个生效屏蔽词。';}
+    catch(error){$('word-feedback').textContent='保存失败，请重试；词表草稿已保留。'+error.message;}
   };
-  $('reset').onclick = () => { wordDraft=DEFAULT_WORDS.slice();$('words').value='';renderWordTags();$('word-feedback').textContent='已填入默认词表，保存后生效。'; };
+  $('reset').onclick = () => {wordDraft=DEFAULT_WORDS.slice();currentGroup().words=wordDraft;selectedWords.clear();$('words').value='';renderWordTags();updateMoveSelection();$('word-feedback').textContent='已在当前组填入默认词表，保存后生效；其他组不变。';};
   $('reveal').onclick = () => { reveal = !reveal; scan(); };
   GM_registerMenuCommand('番茄小说：编辑屏蔽词', () => { if (supportedPage()) openPanel(); else alert('请在番茄小说的「书库」或「排行榜」页面设置屏蔽词。'); });
 
@@ -626,7 +742,7 @@
     const fragment=document.createDocumentFragment();
     for(const row of [...choices.values()].filter(r=>r.state===mode&&(!q||(r.title+' '+r.author).toLowerCase().includes(q))).sort((a,b)=>b.updatedAt-a.updatedAt)){
       const el=document.createElement('div'),a=document.createElement('a');a.href='/page/'+row.id;a.target='_blank';a.rel='noopener noreferrer';a.textContent=row.title;el.append(a);
-      const meta=document.createElement('div');const matched=config.words.filter(w=>normalize(w)&&[row.title,config.abstract?row.abstract||'':''].some(t=>normalize(t).includes(normalize(w))));meta.textContent=(row.author||'')+(matched.length?' · 命中关键词：'+matched.join('、'):'');el.append(meta);choiceButtons(row,el);if(mode==='later')addSyncControls(row,el);fragment.append(el);
+      const meta=document.createElement('div');const matched=matchFilterWords([row.title,config.abstract?row.abstract||'':'']);meta.textContent=(row.author||'')+(matched.length?' · 命中关键词：'+matched.join('、'):'');el.append(meta);choiceButtons(row,el);if(mode==='later')addSyncControls(row,el);fragment.append(el);
     }cq('rows').replaceChildren(fragment);if(!cq('rows').children.length)cq('rows').textContent='暂无记录';renderSyncTools();
   }
   cq('open').onclick=()=>{choiceListOpen=true;renderChoices();};cq('close').onclick=()=>{if(drawerReady)closeDrawer();else{choiceListOpen=false;renderChoices();}};
@@ -890,7 +1006,7 @@
         alignLibraryCards();
         return;
       }
-      const words = config.words.map(normalize).filter(Boolean);
+
       const cards = [...document.querySelectorAll(CARD)].filter(card=>!card.closest('[data-fq-native-hidden]'));
       let hits = 0, unknown = 0;
       const records = [];
@@ -899,7 +1015,8 @@
         if (config.abstract) fields.push(readText(card.querySelector(ABSTRACT)));
         if (fields.some(text => /[\ue000-\uf8ff]/u.test(text))) unknown++;
         const idForChoice=attachChoices(card);
-        const keywordHit = config.enabled && fields.some(text => words.some(word => normalize(text).includes(word)));
+        const matches=config.enabled?matchFilterWords(fields):[];
+        const keywordHit = matches.length>0;
         const hit=keywordHit||choices.get(idForChoice)?.state==='skip';
         if (hit) {
           hits++; card.setAttribute(MARK, reveal ? 'show' : 'hide');
@@ -907,7 +1024,6 @@
           const id = bookLink?.getAttribute('href')?.match(/\/page\/(\d+)(?:[/?#]|$)/)?.[1];
           if (id && keywordHit) {
             const author = readText(card.querySelector('.book-item-text > .author, .book-item-text > .book-item-desc')).replace(/^作者\s*[：:]\s*/,'').trim();
-            const matches = config.words.filter(word => normalize(word) && fields.some(text=>normalize(text).includes(normalize(word))));
             records.push({id,title:fields[0].trim() || '书籍 '+id,author,matches});
           }
         }
@@ -1008,7 +1124,7 @@
       const fragment=document.createDocumentFragment();
       const pendingIds=new Set(s.ids);
       let visible=0;
-      for(const book of fresh){const id=String(book.book_id);if(pendingIds.has(id))continue;const card=makeStreamCard(book,s);const fields=[readText(card.querySelector(TITLE)),config.abstract?readText(card.querySelector(ABSTRACT)):''];const hit=choices.get(id)?.state==='skip'||(config.enabled&&fields.some(t=>config.words.some(w=>normalize(w)&&normalize(t).includes(normalize(w)))));if(hit)card.setAttribute(MARK,reveal?'show':'hide');if(!hit||reveal)visible++;fragment.append(card);pendingIds.add(id);}
+      for(const book of fresh){const id=String(book.book_id);if(pendingIds.has(id))continue;const card=makeStreamCard(book,s);const fields=[readText(card.querySelector(TITLE)),config.abstract?readText(card.querySelector(ABSTRACT)):''];const hit=choices.get(id)?.state==='skip'||(config.enabled&&matchFilterWords(fields).length>0);if(hit)card.setAttribute(MARK,reveal?'show':'hide');if(!hit||reveal)visible++;fragment.append(card);pendingIds.add(id);}
       s.list.append(fragment);s.ids=pendingIds;s.page++;s.pages++;s.error='';
       s.empty=visible?0:s.empty+1;
       s.done=ended;
@@ -1059,6 +1175,10 @@
   const bs=filterBar.attachShadow({mode:'open'});
   bs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#333}#bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 8px;background:#fff}button{font:inherit;color:#555;background:#fff;border:1px solid #ddd;border-radius:6px;padding:5px 10px;cursor:pointer}label{white-space:nowrap}input{accent-color:#ff5f16}#summary{font-size:12px;color:#777}#error{color:#a33}#keyword-tags{display:flex;gap:6px;flex-wrap:wrap;padding:0 8px 12px;max-height:84px;overflow:auto;overscroll-behavior:contain}#keyword-tags:empty{display:none}.keyword-tag{background:#fff2e9;color:#a54313;border-radius:5px;padding:2px 8px;overflow-wrap:anywhere;max-width:100%}#words{max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style><div id="bar"><label><input id="enabled" type="checkbox">关键词过滤</label><button id="words"></button><label><input id="abstract" type="checkbox">匹配简介</label><button id="reveal">临时显示隐藏书籍</button><button id="records">屏蔽记录</button><button id="browse">浏览设置</button><span id="summary"></span><span id="error" role="status"></span></div><div id="keyword-tags" role="list" aria-label="当前生效的屏蔽词"></div>';
   const bq=id=>bs.getElementById(id);
+  const quickProfile=document.createElement('label');quickProfile.id='profile-quick-label';quickProfile.innerHTML='选书方案 <select id="profile-quick" aria-label="切换选书方案"></select>';bq('bar').prepend(quickProfile);
+  bq('profile-quick').onchange=()=>switchProfile(bq('profile-quick').value);
+  const quickStyle=document.createElement('style');quickStyle.textContent='#profile-quick-label{grid-column:1/-1;display:flex;align-items:center;gap:10px}#profile-quick{flex:1;min-width:0;font:inherit;border:1px solid #ddd2c9;border-radius:6px;padding:6px;background:white;color:#514337}';bs.append(quickStyle);
+  let displayedProfileSignature='';
   const introNotice=document.createElement('div');introNotice.id='intro-notice';introNotice.hidden=true;introNotice.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:8px 12px;background:#fff7ef;border:1px solid #ffd8b9;border-radius:6px;box-shadow:0 4px 12px #0001';bs.append(introNotice);
   // Reuse the site's right-hand tools; controls expand beside it without moving the book list.
   let filterToolsOpen=false;
@@ -1156,12 +1276,14 @@
   bq('words').onclick=()=>openDrawer('rules');bq('records').onclick=()=>openDrawer('history');bq('browse').onclick=()=>{openDrawer('rules');toggle.focus({preventScroll:true});};
   bq('reveal').onclick=()=>{$('reveal').click();};
   for(const field of ['enabled','abstract'])bq(field).onchange=async()=>{
-    const next={...config,[field]:bq(field).checked};bq(field).disabled=true;
-    try{await GM_setValue(STORE,next);config=next;bq('error').textContent='';scan();}
+    const next=cloneProfile(profileState);next.profiles.find(p=>p.id===next.activeId)[field]=bq(field).checked;bq(field).disabled=true;
+    try{await persistProfiles(next);bq('error').textContent='';}
     catch{bq(field).checked=config[field];bq('error').textContent='保存失败，请重试';}finally{bq(field).disabled=false;}
   };
   let displayedWordSignature='';
   function updateFilterBar(total,hits){
+    const profileSignature=JSON.stringify([profileState.activeId,profileState.profiles.map(p=>[p.id,p.name])]);
+    if(profileSignature!==displayedProfileSignature){displayedProfileSignature=profileSignature;profileOptions(bq('profile-quick'),profileState.profiles,profileState.activeId);}
     const signature=JSON.stringify(config.words);if(signature!==displayedWordSignature){displayedWordSignature=signature;const tags=config.words.map(word=>{const tag=document.createElement('span');tag.className='keyword-tag';tag.setAttribute('role','listitem');tag.textContent=word;return tag;});bq('keyword-tags').replaceChildren(...tags);}
     bq('enabled').checked=config.enabled;bq('abstract').checked=config.abstract;
     bq('words').title=config.words.join('、');const words='屏蔽词 '+config.words.length+' 个 · 编辑';if(bq('words').textContent!==words)bq('words').textContent=words;
@@ -1180,9 +1302,21 @@
   }
   drawerReady=true;mountFilterBar();setInterval(mountFilterBar,700);
 
+  let configReadSerial=0;
+  async function refreshProfiles(){
+    const serial=++configReadSerial;
+    try{const next=await historyCall({action:'filterRead'});if(serial!==configReadSerial||next.revision<=profileState.revision)return;
+      const dirty=profileDirty();applyProfileState(next);scan();renderChoices();
+      if(drawerRulesLoaded){if(dirty){$('profile-message').textContent='另一页更新了方案；正在使用「'+currentProfile().name+'」，本页草稿保留，保存前请载入最新设置。';$('profile-latest').hidden=false;}else resetWordDraft();}
+    }catch{if(drawerRulesLoaded)$('profile-message').textContent='读取方案失败，请稍后重试。';}
+  }
+  if(typeof FQ_CONFIG_WATCH==='function')FQ_CONFIG_WATCH(refreshProfiles);
+  window.addEventListener('focus',refreshProfiles);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshProfiles();});
+  if(typeof FQ_CONFIG_WATCH!=='function')setInterval(refreshProfiles,2000);
   scan();
   syncStream();
   renderChoices();
+  refreshProfiles();
   // 覆盖网站内部跳转，包括书库与排行榜之间切换；无需改写网站 history。
   setInterval(() => {
     if (location.pathname + location.search !== lastPath) { lastPath = location.pathname + location.search; reveal = false; recordedSignatures.clear(); scan(); }
