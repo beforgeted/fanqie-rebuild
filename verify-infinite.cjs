@@ -15,7 +15,7 @@ const controls=()=>w.document.querySelector('.fq-stream-controls');
 const more=()=>controls().querySelectorAll('button')[1];
 const cards=()=>[...w.document.querySelectorAll('[data-fq-stream] .stack-book-item')];
 (async()=>{
- w.eval(source);
+ w.eval(source);await until(()=>!!controls());
  more().click();await until(()=>cards().length===3);await wait(100);
  assert.match(requests[0],/page_index=6/);assert.match(requests[0],/category_id=718/);
  assert.equal(cards()[1].getAttribute('data-fq-keyword-blocked'),'hide');

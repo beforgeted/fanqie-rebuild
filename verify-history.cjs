@@ -68,5 +68,27 @@ const records=()=>Object.entries(values).filter(([key])=>key.startsWith('fq-hist
   failWrites=false; failed.document.querySelector('.book-item-abstract').textContent+='继续'; await wait(250);
   assert.equal(records().length,3); assert.equal(shadow(failed).getElementById('history-save-warning').textContent,'');
   assert.equal((await send({action:'list'},'https://example.com/')).ok,false);
+  // Manual choices share storage across tabs and remain distinct from keyword history.
+  const choiceA=a.document.getElementById('fq-choice-host').shadowRoot;
+  a.document.querySelector('.fq-choice-actions [data-choice=skip]').click();await wait(100);
+  b.dispatchEvent(new b.Event('focus'));await wait(100);
+  assert.equal(b.document.querySelector('.fq-choice-state').textContent,'不想看');
+  assert.equal(b.document.querySelector('.stack-book-item').getAttribute('data-fq-keyword-blocked'),'hide');
+  a.document.querySelector('.fq-choice-actions [data-choice=later]').click();await wait(100);
+  b.dispatchEvent(new b.Event('focus'));await wait(100);
+  assert.equal(b.document.querySelector('.fq-choice-state').textContent,'已待看');
+  assert.equal(b.document.querySelector('.stack-book-item').getAttribute('data-fq-keyword-blocked'),'hide','later does not bypass keywords');
+  failWrites=true;
+  a.document.querySelector('.fq-choice-actions [data-choice=skip]').click();await wait(100);
+  assert.match(choiceA.getElementById('msg').textContent,/保存失败/);
+  assert.equal(a.document.querySelector('.fq-choice-state').textContent,'已待看');failWrites=false;
+  a.document.querySelector('.fq-choice-actions [data-choice=none]').click();await wait(100);
+  assert.equal(a.document.querySelector('.fq-choice-state').textContent,'未标记');
+  const nativeButton=a.document.createElement('button');nativeButton.className='add-bookshelf-btn';nativeButton.textContent='加入书架';
+  const header=a.document.createElement('div');header.className='page-header-info';header.innerHTML='<h1>详情测试</h1>';header.append(nativeButton);a.document.body.append(header);
+  a.history.pushState({},'', '/page/1234567890123456789');await wait(850);
+  assert.equal(nativeButton.nextElementSibling.className,'fq-detail-choices','actions live next to native bookshelf button');
+  assert.notEqual(a.getComputedStyle(a.document.getElementById('fq-choice-host')).position,'fixed','no new floating panel');
+  console.log('PASS manual choices: cross-tab refresh, state transitions, keyword precedence, failed-write rollback');
   console.log('PASS history: concurrent tabs, deduplication, manual progress preservation, persistence, filters, copy fallback, safe rendering/CSV, storage failure recovery, sender checks');
 })().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>windows.forEach(w=>w.close()));

@@ -2,6 +2,15 @@
 // Shared with the extension service worker. Each book has its own key; writes
   // are serialized by the caller so records/handled marks survive tab races.
   async function historyOperation(storage, message) {
+    const choicePrefix='fq-choice-';
+    if(message.action==='choices') return Object.entries(await storage.all()).filter(([k,v])=>k.startsWith(choicePrefix)&&v&&/^\d{5,25}$/.test(v.id)).map(([,v])=>v);
+    if(message.action==='choose') {
+      const b=message.book;
+      if(!b||!/^\d{5,25}$/.test(b.id)||!['none','later','skip'].includes(message.state))throw Error('无效标记');
+      const previous=await storage.get(choicePrefix+b.id)||{};
+      const row={id:b.id,title:String(b.title||previous.title||b.id).slice(0,500),author:String(b.author||previous.author||'').slice(0,200),abstract:String(b.abstract||previous.abstract||'').slice(0,12000),state:message.state,updatedAt:Date.now()};
+      await storage.set({[choicePrefix+b.id]:row});return row;
+    }
     const prefix = 'fq-history-book-';
     const validId = id => typeof id === 'string' && /^\d{5,25}$/.test(id);
     const keyOf = id => prefix + id;

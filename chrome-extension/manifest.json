@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "番茄小说 · 二游关键词屏蔽",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "在番茄书库和排行榜过滤指定题材，自动记录命中书籍，支持待处理清单与导出。",
   "permissions": [
     "storage"

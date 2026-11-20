@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.4.0
+// @version      1.5.0
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -18,7 +18,7 @@
  * https://github.com/naiyQAQ/fanqie-assistant
  * https://greasyfork.org/scripts/589115/code
  * 本脚本不请求接口，不上传阅读记录，不修改正文。 */
-(() => {
+(async () => {
   'use strict';
   if (document.getElementById('fq-keyword-filter-host')) return;
   const DEFAULT_WORDS = ['原神', '崩铁', '星穹铁道', '星铁', '崩坏3', '崩坏三', '绝区零', '鸣潮'];
@@ -33,6 +33,15 @@
   // Shared with the extension service worker. Each book has its own key; writes
   // are serialized by the caller so records/handled marks survive tab races.
   async function historyOperation(storage, message) {
+    const choicePrefix='fq-choice-';
+    if(message.action==='choices') return Object.entries(await storage.all()).filter(([k,v])=>k.startsWith(choicePrefix)&&v&&/^\d{5,25}$/.test(v.id)).map(([,v])=>v);
+    if(message.action==='choose') {
+      const b=message.book;
+      if(!b||!/^\d{5,25}$/.test(b.id)||!['none','later','skip'].includes(message.state))throw Error('无效标记');
+      const previous=await storage.get(choicePrefix+b.id)||{};
+      const row={id:b.id,title:String(b.title||previous.title||b.id).slice(0,500),author:String(b.author||previous.author||'').slice(0,200),abstract:String(b.abstract||previous.abstract||'').slice(0,12000),state:message.state,updatedAt:Date.now()};
+      await storage.set({[choicePrefix+b.id]:row});return row;
+    }
     const prefix = 'fq-history-book-';
     const validId = id => typeof id === 'string' && /^\d{5,25}$/.test(id);
     const keyOf = id => prefix + id;
@@ -80,7 +89,7 @@
       get: async key => GM_getValue(key, null),
       all: async () => {
         const keys = typeof GM_listValues === 'function' ? await GM_listValues() : [];
-        const entries = await Promise.all(keys.filter(k=>k.startsWith('fq-history-book-')).map(async k=>[k,await GM_getValue(k,null)]));
+        const entries = await Promise.all(keys.filter(k=>k.startsWith('fq-history-book-')||k.startsWith('fq-choice-')).map(async k=>[k,await GM_getValue(k,null)]));
         return Object.fromEntries(entries);
       },
       set: async values => { for (const [key,value] of Object.entries(values)) await GM_setValue(key,value); }
@@ -181,7 +190,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.4.0</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.5.0</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -350,6 +359,81 @@
       list.setAttribute(LAYOUT,'aligned');
     }
   }
+
+  let choices=new Map(),choiceStamp='',choiceBusy=false,suppressAutoUntil=0;
+  try {choices=new Map((await historyCall({action:'choices'})).map(r=>[r.id,r]));}catch{}
+  const choiceHost=document.createElement('div');choiceHost.id='fq-choice-host';
+  choiceHost.style.cssText='display:block;max-width:1160px;margin:20px auto;';
+  const cs=choiceHost.attachShadow({mode:'open'});
+  cs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#292524}*{box-sizing:border-box}button,select,input{font:inherit}button{cursor:pointer;background:white;border:1px solid #d6d3d1;border-radius:7px;padding:6px 10px;margin:3px}button:disabled{opacity:.5}#box{width:100%;padding:24px;background:#fff;border:1px solid #eee;border-radius:6px}[hidden]{display:none!important}#rows>div{padding:10px 0;border-bottom:1px solid #eee}a{color:#a83e19}#msg{font-size:12px;color:#a83e19}input{width:100%}</style><button id="open">我的选书</button><section id="box" hidden><strong>我的选书 · 本地标记</strong><div id="current"></div><div id="msg" role="status"></div><select id="filter"><option value="later">待看</option><option value="skip">不想看</option></select><input id="query" placeholder="搜索书名或作者"><div id="rows"></div><button id="close">收起</button></section>';
+  document.body.append(choiceHost);
+  let choiceListOpen=false;
+  const detailActions=document.createElement('span');detailActions.className='fq-detail-choices';detailActions.style.cssText='position:absolute;left:320px;bottom:0;display:flex;align-items:center;gap:8px;white-space:nowrap';
+  const detailFeedback=document.createElement('div');detailFeedback.style.cssText='position:absolute;left:320px;top:100%;font:12px/1.6 system-ui;color:#777;margin-top:6px';detailFeedback.setAttribute('role','status');
+  const navChoice=document.createElement('div');navChoice.className='nav-item';
+  const navLink=document.createElement('a');navLink.href='#fq-my-books';navLink.textContent='我的选书';navChoice.append(navLink);
+  navLink.onclick=e=>{e.preventDefault();choiceListOpen=!choiceListOpen;renderChoices();if(choiceListOpen)choiceHost.scrollIntoView({block:'start',behavior:'smooth'});};
+  const cq=id=>cs.getElementById(id);
+  const stateLabel=state=>({later:'已待看',skip:'不想看',none:'未标记'}[state]||'未标记');
+  function choiceButtons(book,parent) {
+    for(const [state,label] of [['later','待看'],['skip','不想看'],['none','清除标记']]){
+      const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.choice=state;b.style.cssText='font:12px/1.4 system-ui;cursor:pointer;padding:2px 5px;margin:2px;border:1px solid #d6d3d1;border-radius:5px;background:#fff;color:#54443b';
+      b.onclick=async e=>{e.preventDefault();e.stopPropagation();await choose(book,state);};parent.append(b);
+    }
+  }
+  async function choose(book,state) {
+    if(choiceBusy)return;choiceBusy=true;
+    const prior=choices.get(book.id)?.state||'none';
+    try {
+      const row=await historyCall({action:'choose',book,state});choices.set(book.id,row);
+      suppressAutoUntil=Date.now()+1500;scan();renderChoices();
+      cq('msg').replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));
+      const undo=document.createElement('button');undo.textContent='撤销';undo.onclick=()=>choose(book,prior);cq('msg').append(undo);
+      if(detailBook()){detailFeedback.replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));const back=undo.cloneNode(true);back.onclick=()=>choose(book,prior);detailFeedback.append(back);}
+    } catch {const error='保存失败，请重试；原标记未改变。';cq('msg').textContent=error;if(detailBook())detailFeedback.textContent=error;else{choiceListOpen=true;renderChoices();}}
+    finally{choiceBusy=false;}
+  }
+  function detailBook(){const id=location.pathname.match(/^\/page\/(\d+)/)?.[1];const title=document.querySelector('h1')?.textContent.trim();return id&&title?{id,title,abstract:document.querySelector('.page-abstract-content')?.textContent||'',author:document.querySelector('.author-name')?.textContent.trim()||''}:null;}
+  function renderChoices(){
+    const detail=detailBook();
+    const libraryLink=document.querySelector('a[href="/library"]');
+    if(libraryLink?.parentElement?.parentElement&&!navChoice.isConnected)libraryLink.parentElement.after(navChoice);
+    const anchor=detail?(document.querySelector('.page-header')||document.querySelector('.page-header-info')):document.querySelector('.muye-stack-book-list:not([data-fq-stream])');
+    if(anchor&&!choiceHost.isConnected)anchor.before(choiceHost);
+    if(anchor&&choiceHost.parentElement!==anchor.parentElement)anchor.before(choiceHost);
+    choiceHost.hidden=!choiceListOpen||(!supportedPage()&&!detail);choiceHost.style.display=choiceHost.hidden?'none':'block';cq('box').hidden=false;cq('open').hidden=true;cq('current').hidden=true;
+    detailActions.replaceChildren();
+    const original=document.querySelector('.add-bookshelf-btn');
+    if(detail&&original){
+      if(detailActions.previousElementSibling!==original)original.after(detailActions);
+      if(!detailFeedback.isConnected||detailFeedback.parentElement!==original.parentElement)original.parentElement.append(detailFeedback);
+      choiceButtons(detail,detailActions);
+      const state=choices.get(detail.id)?.state||'none';
+      detailActions.querySelectorAll('button').forEach(b=>{b.className='byte-btn byte-btn-default byte-btn-size-large byte-btn-shape-square muye-button';b.style.cssText='position:static;padding:0 14px;min-width:70px;width:auto!important;margin:0;height:32px;cursor:pointer';b.setAttribute('aria-pressed',String(b.dataset.choice===state));if(b.dataset.choice===state&&state!=='none'){b.textContent=state==='later'?'已待看':'已设为不想看';b.style.color='#fa6725';b.style.borderColor='#fa6725';}if(b.dataset.choice==='none'){b.hidden=state==='none';if(b.hidden)b.style.display='none';}});
+    }else{detailActions.remove();detailFeedback.remove();}
+    const mode=cq('filter').value,q=cq('query').value.trim().toLowerCase();const fragment=document.createDocumentFragment();
+    for(const row of [...choices.values()].filter(r=>r.state===mode&&(!q||(r.title+' '+r.author).toLowerCase().includes(q))).sort((a,b)=>b.updatedAt-a.updatedAt)){
+      const el=document.createElement('div'),a=document.createElement('a');a.href='/page/'+row.id;a.target='_blank';a.rel='noopener noreferrer';a.textContent=row.title;el.append(a);
+      const meta=document.createElement('div');const matched=config.words.filter(w=>normalize(w)&&[row.title,config.abstract?row.abstract||'':''].some(t=>normalize(t).includes(normalize(w))));meta.textContent=(row.author||'')+(matched.length?' · 命中关键词：'+matched.join('、'):'');el.append(meta);choiceButtons(row,el);fragment.append(el);
+    }cq('rows').replaceChildren(fragment);if(!cq('rows').children.length)cq('rows').textContent='暂无记录';
+  }
+  cq('open').onclick=()=>{choiceListOpen=true;renderChoices();};cq('close').onclick=()=>{choiceListOpen=false;renderChoices();};
+  cq('filter').onchange=renderChoices;cq('query').oninput=renderChoices;
+  const wiredChoices=new WeakSet();
+  function attachChoices(card){
+    const link=card.querySelector('a[href*="/page/"]'),id=link?.getAttribute('href')?.match(/\/page\/(\d+)/)?.[1];if(!id)return;
+    const book={id,title:readText(card.querySelector(TITLE)),abstract:readText(card.querySelector(ABSTRACT)),author:readText(card.querySelector('.book-item-text > .author,.book-item-text > .book-item-desc')).replace(/^作者[：:]\s*/,'')};
+    if(!wiredChoices.has(card)){card.querySelectorAll('.fq-choice-actions').forEach(e=>e.remove());const controls=document.createElement('div');controls.className='fq-choice-actions';controls.style.cssText='font:12px/1.5 system-ui;clear:both;padding:6px 0;position:relative';const badge=document.createElement('span');badge.className='fq-choice-state';controls.append(badge);choiceButtons(book,controls);(card.querySelector('.book-item-text')||card).append(controls);wiredChoices.add(card);}
+    const badge=card.querySelector('.fq-choice-state'),text=stateLabel(choices.get(id)?.state);if(badge.textContent!==text)badge.textContent=text;
+    return id;
+  }
+  async function refreshChoices(){try{const rows=await historyCall({action:'choices'});const stamp=JSON.stringify(rows);if(stamp!==choiceStamp){choiceStamp=stamp;choices=new Map(rows.map(r=>[r.id,r]));suppressAutoUntil=Date.now()+1500;scan();renderChoices();}}catch{}}
+  if(typeof FQ_CHOICE_WATCH==='function')FQ_CHOICE_WATCH(refreshChoices);
+  else setInterval(refreshChoices,2000);
+  window.addEventListener('focus',refreshChoices);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshChoices();});
+  let detailKey='';setInterval(()=>{const key=location.pathname+'|'+(document.querySelector('h1')?.textContent||'');if(key!==detailKey){detailKey=key;renderChoices();}},700);
+
   function scan() {
     observer.disconnect();
     try {
@@ -368,12 +452,14 @@
         const fields = [readText(card.querySelector(TITLE))];
         if (config.abstract) fields.push(readText(card.querySelector(ABSTRACT)));
         if (fields.some(text => /[\ue000-\uf8ff]/u.test(text))) unknown++;
-        const hit = config.enabled && fields.some(text => words.some(word => normalize(text).includes(word)));
+        const idForChoice=attachChoices(card);
+        const keywordHit = config.enabled && fields.some(text => words.some(word => normalize(text).includes(word)));
+        const hit=keywordHit||choices.get(idForChoice)?.state==='skip';
         if (hit) {
           hits++; card.setAttribute(MARK, reveal ? 'show' : 'hide');
           const bookLink = card.querySelector('a[href*="/page/"]');
           const id = bookLink?.getAttribute('href')?.match(/\/page\/(\d+)(?:[/?#]|$)/)?.[1];
-          if (id) {
+          if (id && keywordHit) {
             const author = readText(card.querySelector('.book-item-text > .author, .book-item-text > .book-item-desc')).replace(/^作者\s*[：:]\s*/,'').trim();
             const matches = config.words.filter(word => normalize(word) && fields.some(text=>normalize(text).includes(normalize(word))));
             records.push({id,title:fields[0].trim() || '书籍 '+id,author,matches});
@@ -450,7 +536,7 @@
   }
   async function loadStream(manual=false) {
     const s=stream;
-    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden)))return;
+    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||Date.now()<suppressAutoUntil)))return;
     if(s.key!==routeKey())return;
     if(manual){s.empty=0;s.error='';}
     s.loading=true;updateStreamStatus();
@@ -475,7 +561,7 @@
       const fragment=document.createDocumentFragment();
       const pendingIds=new Set(s.ids);
       let visible=0;
-      for(const book of fresh){const id=String(book.book_id);if(pendingIds.has(id))continue;const card=makeStreamCard(book,s);const fields=[readText(card.querySelector(TITLE)),config.abstract?readText(card.querySelector(ABSTRACT)):''];const hit=config.enabled&&fields.some(t=>config.words.some(w=>normalize(w)&&normalize(t).includes(normalize(w))));if(hit)card.setAttribute(MARK,reveal?'show':'hide');if(!hit||reveal)visible++;fragment.append(card);pendingIds.add(id);}
+      for(const book of fresh){const id=String(book.book_id);if(pendingIds.has(id))continue;const card=makeStreamCard(book,s);const fields=[readText(card.querySelector(TITLE)),config.abstract?readText(card.querySelector(ABSTRACT)):''];const hit=choices.get(id)?.state==='skip'||(config.enabled&&fields.some(t=>config.words.some(w=>normalize(w)&&normalize(t).includes(normalize(w)))));if(hit)card.setAttribute(MARK,reveal?'show':'hide');if(!hit||reveal)visible++;fragment.append(card);pendingIds.add(id);}
       s.list.append(fragment);s.ids=pendingIds;s.page++;s.pages++;s.error='';
       s.empty=visible?0:s.empty+1;
       s.done=ended;
@@ -521,6 +607,7 @@
 
   scan();
   syncStream();
+  renderChoices();
   // 覆盖网站内部跳转，包括书库与排行榜之间切换；无需改写网站 history。
   setInterval(() => {
     if (location.pathname + location.search !== lastPath) { lastPath = location.pathname + location.search; reveal = false; recordedSignatures.clear(); scan(); }
