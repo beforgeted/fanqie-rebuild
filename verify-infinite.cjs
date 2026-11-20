@@ -54,7 +54,7 @@ const cards=()=>[...w.document.querySelectorAll('[data-fq-stream] .stack-book-it
  more().click();await until(()=>controls().textContent.includes('已暂停自动加载'));
  assert.ok(controls().textContent.includes('继续查找'),'three all-hidden pages pause automatic loading');
  const sh=w.document.getElementById('fq-keyword-filter-host').shadowRoot;
- const toggle=sh.querySelector('#settings-view label input');toggle.checked=false;await toggle.onchange();
+ const toggle=sh.getElementById('infinite-toggle');toggle.checked=false;await toggle.onchange();
  assert.equal(w.document.querySelector('[data-fq-stream]'),null);
  assert.equal(w.document.querySelector('[data-fq-native-hidden]'),null);
  assert.ok(values['fq-history-book-100002'],'history preserved on disable');
