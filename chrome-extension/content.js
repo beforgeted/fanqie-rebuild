@@ -1,10 +1,10 @@
-// Local Chrome extension adapter. No remote resources or network requests.
+// Local Chrome extension adapter. User-initiated shelf sync uses official same-origin APIs.
 (async () => {
   const cache = await chrome.storage.local.get(['fq-keyword-filter-v1','fq-infinite-enabled']);
   function GM_getValue(key, fallback) { return Object.hasOwn(cache, key) ? cache[key] : fallback; }
   async function GM_setValue(key, value) { await chrome.storage.local.set({[key]:value}); cache[key] = value; }
-  function FQ_CHOICE_WATCH(fn) { chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&Object.keys(changes).some(k=>k.startsWith('fq-choice-')))fn();}); }
-  function GM_registerMenuCommand() {} // The page's floating panel provides settings.
+  function FQ_CHOICE_WATCH(fn) { chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&Object.keys(changes).some(k=>k.startsWith('fq-choice-')||k.startsWith('fq-official-sync-')))fn();}); }
+  function GM_registerMenuCommand() {} // The integrated page drawer provides settings.
   async function FQ_HISTORY(message) {
     const response = await chrome.runtime.sendMessage({channel:'fq-filter-history',...message});
     if (!response?.ok) throw new Error(response?.error || '记录操作失败');
@@ -13,7 +13,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.6.1
+// @version      1.7.0
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -29,7 +29,7 @@
 /* 字体字符对应数据参考 naiyQAQ/fanqie-assistant (GPLv3):
  * https://github.com/naiyQAQ/fanqie-assistant
  * https://greasyfork.org/scripts/589115/code
- * 本脚本不请求接口，不上传阅读记录，不修改正文。 */
+ * 仅请求番茄官方接口；用户主动同步候选时写入官方书架，不修改正文。 */
 (async () => {
   'use strict';
   if (document.getElementById('fq-keyword-filter-host')) return;
@@ -45,6 +45,13 @@
   // Shared with the extension service worker. Each book has its own key; writes
   // are serialized by the caller so records/handled marks survive tab races.
   async function historyOperation(storage, message) {
+    if(message.action==='syncList'||message.action==='syncSave'){
+      if(!/^\d{1,30}$/.test(message.accountId||''))throw Error('无效账号');
+      const prefix='fq-official-sync-'+message.accountId+'-';
+      if(message.action==='syncList')return Object.entries(await storage.all()).filter(([key,row])=>key.startsWith(prefix)&&row&&key===prefix+row.id).map(([,row])=>row);
+      if(!/^\d{5,25}$/.test(message.id||'')||!['queued','syncing','success','failed'].includes(message.status))throw Error('无效同步记录');
+      const row={id:message.id,status:message.status,message:String(message.message||'').slice(0,300),groupId:String(message.groupId||''),updatedAt:Date.now()};await storage.set({[prefix+message.id]:row});return row;
+    }
     const choicePrefix='fq-choice-';
     if(message.action==='choices') return Object.entries(await storage.all()).filter(([k,v])=>k.startsWith(choicePrefix)&&v&&/^\d{5,25}$/.test(v.id)).map(([,v])=>v);
     if(message.action==='choose') {
@@ -94,6 +101,62 @@
     throw new Error('无效的记录操作');
   }
   // HISTORY_CORE_END
+
+  // OFFICIAL_CORE_BEGIN
+  function parseOfficialJSON(text) {
+    // Keep long account/book/group IDs exact; never round them through JS Number.
+    return JSON.parse(text.replace(/"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g,
+      token=>/^-?\d{16,}$/.test(token)?'"'+token+'"':token));
+  }
+  function createOfficialShelfClient({fetchImpl,csrf,delay=ms=>new Promise(r=>setTimeout(r,ms))}) {
+    const query='?aid=1967&iid=0&version_code=57700&update_version_code=57700';
+    const base='/reading/bookapi/bookshelf/';
+    async function request(url,body){
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+      try{
+        const options={credentials:'same-origin',cache:'no-store',signal:controller.signal};
+        if(body){const token=csrf();if(!token)throw Error('登录校验已失效，请重新登录番茄后重试。');Object.assign(options,{method:'POST',headers:{'Content-Type':'application/json','x-secsdk-csrf-token':token},body:JSON.stringify(body)});}
+        const response=await fetchImpl(url,options);
+        if(!response.ok)throw Error('官方请求失败（HTTP '+response.status+'），请稍后重试。');
+        let data;try{data=parseOfficialJSON(await response.text());}catch{throw Error('官方返回了无法识别的数据，请稍后重试。');}
+        if(data.code===undefined||data.code===null||Number(data.code)!==0)throw Error('官方未接受请求：'+String(data.message||data.msg||data.code).slice(0,180));
+        return data.data;
+      }catch(error){if(error.name==='AbortError')throw Error('请求超时，结果待核验；重试会先检查官方书架。');throw error;}
+      finally{clearTimeout(timer);}
+    }
+    async function account(){const data=await request('/api/user/info/v2');const id=String(data?.id||data?.user_id||data?.uid||'');if(!/^\d+$/.test(id))throw Error('请先在番茄官网登录账号。');return id;}
+    async function read(){const data=await request(base+'info/v:version/'+query);if(!Array.isArray(data?.book_shelf_info))throw Error('无法读取官方书架，请刷新或重新登录。');return data.book_shelf_info;}
+    async function checkAccount(expected){if(await account()!==expected)throw Error('登录账号已切换，已停止同步，请刷新同步状态后重试。');}
+    const find=(rows,id)=>rows.find(row=>String(row.book_id)===id);
+    const inTarget=row=>!!row?.group_id&&row.group_name==='待看';
+    async function verify(id,predicate){for(let attempt=0;attempt<3;attempt++){if(attempt)await delay(attempt*350);const rows=await read();if(predicate(find(rows,id)))return rows;}throw Error('官方尚未确认保存，结果待核验；重试会先检查书架。');}
+    async function syncOne(id,{accountId,allowedGroup='',onStage=async()=>{}}){
+      if(!/^\d{5,25}$/.test(id))throw Error('无效书籍 ID');
+      await checkAccount(accountId);let rows=await read(),book=find(rows,id);
+      if(inTarget(book))return {groupId:String(book.group_id),already:true};
+      const checkMove=()=>{if(book?.group_id&&!inTarget(book)&&String(book.group_id)!==allowedGroup)throw Error('该书已在官方「'+(book.group_name||'其他分组')+'」，请重新选择并确认移动。');};
+      checkMove();
+      if(!book){
+        await onStage('adding');await checkAccount(accountId);
+        await request(base+'add/v:version/'+query,{identify_data:[{book_id:id,book_type:0,asterisked:false,modify_time:Date.now()}],add_book_source:0});
+        rows=await verify(id,Boolean);book=find(rows,id);
+      }
+      if(inTarget(book))return {groupId:String(book.group_id),already:true};
+      checkMove();
+      const targets=[...new Set(rows.filter(inTarget).map(row=>String(row.group_id)))];
+      if(targets.length>1)throw Error('官方书架有多个同名“待看”分组，请先整理为一个再重试。');
+      const item={book_id:id,book_type:book.book_type??0,modify_time:Date.now(),group_name:'待看'};
+      if(targets.length)item.group_id=targets[0];
+      await onStage('moving');await checkAccount(accountId);
+      await request(base+'update/v:version/'+query,{book_data:[item]});
+      await onStage('verifying');rows=await verify(id,row=>inTarget(row)&&(!targets.length||String(row.group_id)===targets[0]));
+      await checkAccount(accountId);
+      return {groupId:String(find(rows,id).group_id),already:false};
+    }
+    return {account,read,syncOne,inTarget};
+  }
+  // OFFICIAL_CORE_END
+
   let historyQueue = Promise.resolve();
   function historyCall(message) {
     if (typeof FQ_HISTORY === 'function') return FQ_HISTORY(message);
@@ -101,7 +164,7 @@
       get: async key => GM_getValue(key, null),
       all: async () => {
         const keys = typeof GM_listValues === 'function' ? await GM_listValues() : [];
-        const entries = await Promise.all(keys.filter(k=>k.startsWith('fq-history-book-')||k.startsWith('fq-choice-')).map(async k=>[k,await GM_getValue(k,null)]));
+        const entries = await Promise.all(keys.filter(k=>k.startsWith('fq-history-book-')||k.startsWith('fq-choice-')||k.startsWith('fq-official-sync-')).map(async k=>[k,await GM_getValue(k,null)]));
         return Object.fromEntries(entries);
       },
       set: async values => { for (const [key,value] of Object.entries(values)) await GM_setValue(key,value); }
@@ -203,7 +266,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.6.1</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.7.0</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -406,7 +469,7 @@
   const choiceHost=document.createElement('div');choiceHost.id='fq-choice-host';
   choiceHost.style.cssText='display:block;max-width:1160px;margin:20px auto;';
   const cs=choiceHost.attachShadow({mode:'open'});
-  cs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#292524}*{box-sizing:border-box}button,select,input{font:inherit}button{cursor:pointer;background:white;border:1px solid #d6d3d1;border-radius:7px;padding:6px 10px;margin:3px}button:disabled{opacity:.5}#box{width:100%;padding:24px;background:#fff;border:1px solid #eee;border-radius:6px}[hidden]{display:none!important}#rows>div{padding:10px 0;border-bottom:1px solid #eee}a{color:#a83e19}#msg{font-size:12px;color:#a83e19}input{width:100%}</style><button id="open">我的选书</button><section id="box" hidden><strong>我的选书 · 本地标记</strong><div id="current"></div><div id="msg" role="status"></div><select id="filter"><option value="later">待看</option><option value="skip">不想看</option></select><input id="query" placeholder="搜索书名或作者"><div id="rows"></div><button id="close">收起</button></section>';
+  cs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#292524}*{box-sizing:border-box}button,select,input{font:inherit}button{cursor:pointer;background:white;border:1px solid #d6d3d1;border-radius:7px;padding:6px 10px;margin:3px}button:disabled{opacity:.5}#box{width:100%;padding:24px;background:#fff;border:1px solid #eee;border-radius:6px}[hidden]{display:none!important}#rows>div{padding:10px 0;border-bottom:1px solid #eee}a{color:#a83e19}#msg{font-size:12px;color:#a83e19}input{width:100%}</style><button id="open">我的选书</button><section id="box" hidden><strong>我的选书 · 本地标记</strong><div id="current"></div><div id="msg" role="status"></div><select id="filter"><option value="later">候选</option><option value="skip">不想看</option></select><input id="query" placeholder="搜索书名或作者"><div id="official-tools" hidden><p>候选保存在本地。加入官方“待看”后，同账号手机可同步；清除本地候选不会移除官方书籍。</p><div class="sync-toolbar"><button id="sync-select">全选当前结果</button><button id="sync-batch">加入官方待看</button><button id="sync-retry">重试失败</button><button id="sync-refresh">刷新同步状态</button></div><p id="sync-message" role="status"></p><div id="sync-review" hidden></div></div><div id="rows"></div><button id="close">收起</button></section>';
   document.body.append(choiceHost);
   let choiceListOpen=false;
   const detailActions=document.createElement('span');detailActions.className='fq-detail-choices';detailActions.style.cssText='display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0';
@@ -431,9 +494,86 @@
   const navLink=document.createElement('a');navLink.href='#fq-my-books';navLink.textContent='我的选书';navChoice.append(navLink);
   navLink.onclick=e=>{e.preventDefault();if(drawerTab)closeDrawer();else openDrawer('later');};
   const cq=id=>cs.getElementById(id);
-  const stateLabel=state=>({later:'已待看',skip:'不想看',none:'未标记'}[state]||'未标记');
+  const official=createOfficialShelfClient({fetchImpl:(...args)=>fetch(...args),csrf:()=>document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('passport_csrf_token='))?.split('=').slice(1).join('=')||''});
+  let syncAccount='',syncRows=new Map(),officialRows=null,syncBusy=false,syncLoading=false,syncGeneration=0;
+  const selectedCandidates=new Set();
+  const candidateRows=()=>[...choices.values()].filter(r=>r.state==='later'&&(!cq('query').value.trim()||(r.title+' '+r.author).toLowerCase().includes(cq('query').value.trim().toLowerCase())));
+  function syncStatus(id){
+    const known=syncRows.get(id),remote=officialRows?.find(r=>String(r.book_id)===id);
+    if(official.inTarget(remote))return {status:'success',label:'已同步到官方待看'};
+    if(known?.status==='success')return officialRows?{status:'pending',label:'待同步'}:{status:'success',label:'已同步（上次核验）'};
+    if(known?.status==='failed')return {status:'failed',label:known.message||'同步失败，请重试'};
+    if(['queued','syncing'].includes(known?.status))return {status:syncBusy?known.status:'failed',label:syncBusy?(known.message||'等待同步'):'上次同步未完成，点击重试核验'};
+    return {status:'pending',label:'待同步'};
+  }
+  async function loadSyncRecords(){const accountId=syncAccount;if(accountId){const rows=await historyCall({action:'syncList',accountId});if(accountId===syncAccount)syncRows=new Map(rows.map(r=>[r.id,r]));}}
+  async function refreshOfficial(){
+    if(syncBusy||syncLoading)return;syncLoading=true;const generation=++syncGeneration;renderChoices();
+    try{const accountId=await official.account();const rows=await official.read();if(generation!==syncGeneration)return;if(syncAccount!==accountId)selectedCandidates.clear();syncAccount=accountId;officialRows=rows;await loadSyncRecords();cq('sync-message').textContent='已核对官方书架；仅点击同步时才会写入。';}
+    catch(error){syncAccount='';officialRows=null;syncRows.clear();cq('sync-message').textContent=error.message;}
+    finally{syncLoading=false;renderChoices();}
+  }
+  async function syncRecord(id,status,message='',groupId=''){const row=await historyCall({action:'syncSave',accountId:syncAccount,id,status,message,groupId});syncRows.set(id,row);renderChoices();}
+  function renderSyncTools(){
+    cq('official-tools').hidden=cq('filter').value!=='later';
+    for(const id of selectedCandidates)if(choices.get(id)?.state!=='later')selectedCandidates.delete(id);
+    cq('sync-batch').textContent='加入官方待看（'+selectedCandidates.size+'）';
+    cq('sync-batch').disabled=syncBusy||syncLoading||!selectedCandidates.size;
+    cq('sync-select').disabled=syncBusy||syncLoading;
+    cq('sync-refresh').disabled=syncBusy||syncLoading;
+    cq('sync-retry').disabled=syncBusy||syncLoading||!candidateRows().some(r=>syncStatus(r.id).status==='failed');
+  }
+  function addSyncControls(row,el){
+    const current=syncStatus(row.id),check=document.createElement('input');check.type='checkbox';check.className='candidate-check';check.checked=selectedCandidates.has(row.id);check.disabled=syncBusy||syncLoading||current.status==='success';check.setAttribute('aria-label','选择候选：'+row.title);check.onchange=()=>{check.checked?selectedCandidates.add(row.id):selectedCandidates.delete(row.id);renderSyncTools();};el.prepend(check);
+    const line=document.createElement('div');line.className='sync-state';line.dataset.status=current.status;line.textContent=current.label;el.append(line);
+    const action=document.createElement('button');action.className='sync-one';action.textContent=current.status==='success'?'已同步':current.status==='failed'?'重试加入官方待看':'加入官方待看';action.disabled=syncBusy||syncLoading||current.status==='success';action.onclick=()=>prepareSync([row.id]);el.append(action);
+  }
+  async function prepareSync(ids){
+    if(syncBusy||syncLoading)return;
+    ids=[...new Set(ids)].filter(id=>choices.get(id)?.state==='later');if(!ids.length)return;
+    if(!navigator.locks?.request){cq('sync-message').textContent='当前浏览器不支持安全的跨标签页同步，请使用新版 Chrome。';return;}
+    syncBusy=true;cq('sync-review').hidden=true;renderChoices();
+    try{
+      const accountId=await official.account();const rows=await official.read();syncAccount=accountId;officialRows=rows;await loadSyncRecords();
+      const allowed=new Map(),conflicts=[];
+      for(const id of ids){const row=rows.find(r=>String(r.book_id)===id);if(row?.group_id&&!official.inTarget(row)){allowed.set(id,String(row.group_id));conflicts.push({title:choices.get(id).title,group:row.group_name||'未命名分组'});}}
+      if(conflicts.length){
+        const panel=cq('sync-review');panel.replaceChildren();const text=document.createElement('p');text.textContent='以下 '+conflicts.length+' 本已在其他官方分组。继续会移到“待看”：';panel.append(text);
+        const list=document.createElement('ul');for(const item of conflicts){const li=document.createElement('li');li.textContent=item.title+'（'+item.group+'）';list.append(li);}panel.append(list);
+        const yes=document.createElement('button');yes.textContent='移动并继续';yes.onclick=()=>{panel.hidden=true;runSync(ids,accountId,allowed);};
+        const no=document.createElement('button');no.textContent='取消';no.onclick=()=>{panel.hidden=true;syncBusy=false;cq('sync-message').textContent='已取消，官方书架未改动。';renderChoices();};panel.append(yes,no);panel.hidden=false;
+        cq('sync-message').textContent='等待确认移动分组';renderChoices();return;
+      }
+      await runSync(ids,accountId,allowed);
+    }catch(error){cq('sync-message').textContent=error.message;syncBusy=false;renderChoices();}
+  }
+  async function runSync(ids,accountId,allowed){
+    let done=0,failed=0;cq('sync-message').textContent='正在等待同步，请保持此页面打开…';
+    try{
+      await navigator.locks.request('fq-official-shelf-sync',async()=>{
+        for(const id of ids)await syncRecord(id,'queued','等待同步');
+        for(const id of ids){
+          try{
+            const current=(await historyCall({action:'choices'})).find(r=>r.id===id);if(current?.state!=='later')throw Error('已不在候选清单，本次未同步。');
+            await syncRecord(id,'syncing','正在核对官方书架');
+            const result=await official.syncOne(id,{accountId,allowedGroup:allowed.get(id)||'',onStage:stage=>syncRecord(id,'syncing',({adding:'正在加入官方书架',moving:'正在移入官方待看',verifying:'正在核验保存结果'})[stage])});
+            if(officialRows){officialRows=officialRows.filter(r=>String(r.book_id)!==id);officialRows.push({book_id:id,group_id:result.groupId,group_name:'待看'});}await syncRecord(id,'success','已同步到官方待看',result.groupId);selectedCandidates.delete(id);done++;
+          }catch(error){failed++;try{await syncRecord(id,'failed',error.message);}catch{cq('sync-message').textContent='本地同步状态保存失败，请刷新后核对官方书架。';throw error;}}
+          cq('sync-message').textContent='已处理 '+(done+failed)+' / '+ids.length+' 本；成功 '+done+' 本，失败 '+failed+' 本。';
+        }
+      });
+      officialRows=null;
+    }catch(error){cq('sync-message').textContent='同步已停止：'+error.message;officialRows=null;}
+    finally{syncBusy=false;renderChoices();}
+  }
+  cq('sync-select').onclick=()=>{const ids=candidateRows().filter(r=>syncStatus(r.id).status!=='success').map(r=>r.id),all=ids.every(id=>selectedCandidates.has(id));for(const id of ids)all?selectedCandidates.delete(id):selectedCandidates.add(id);renderChoices();};
+  cq('sync-batch').onclick=()=>prepareSync([...selectedCandidates]);
+  cq('sync-retry').onclick=()=>prepareSync(candidateRows().filter(r=>syncStatus(r.id).status==='failed').map(r=>r.id));
+  cq('sync-refresh').onclick=refreshOfficial;
+  const syncStyle=document.createElement('style');syncStyle.textContent='.candidate-check{width:auto;margin-right:8px;accent-color:#ff5f16}.sync-toolbar{display:flex;flex-wrap:wrap;gap:6px}.sync-one{color:#d64c0b!important}.sync-state{font-size:12px;color:#777;margin:8px 0 2px}.sync-state[data-status=success]{color:#287541}.sync-state[data-status=failed]{color:#b23b2b}#sync-review{background:#fff5ec;border:1px solid #ffdcc3;border-radius:8px;padding:12px}#sync-review ul{max-height:180px;overflow:auto}#official-tools p{font-size:13px;color:#777}';cs.append(syncStyle);
+  const stateLabel=state=>({later:'已加入候选',skip:'不想看',none:'未标记'}[state]||'未标记');
   function choiceButtons(book,parent) {
-    for(const [state,label] of [['later','待看'],['skip','不想看'],['none','清除标记']]){
+    for(const [state,label] of [['later','候选'],['skip','不想看'],['none','清除标记']]){
       const b=document.createElement('button');b.type='button';b.textContent=label;b.dataset.choice=state;b.style.cssText='font:12px/1.4 system-ui;cursor:pointer;padding:2px 5px;margin:2px;border:1px solid #d6d3d1;border-radius:5px;background:#fff;color:#54443b';
       b.onclick=async e=>{e.preventDefault();e.stopPropagation();await choose(book,state);};parent.append(b);
     }
@@ -466,13 +606,13 @@
       if(!detailFeedback.isConnected||detailFeedback.parentElement!==original.parentElement)original.parentElement.append(detailFeedback);
       choiceButtons(detail,detailActions);
       const state=choices.get(detail.id)?.state||'none';
-      detailActions.querySelectorAll('button').forEach(b=>{b.className='byte-btn byte-btn-default byte-btn-size-large byte-btn-shape-square muye-button';b.style.cssText='position:static;padding:0 14px;min-width:70px;width:auto!important;margin:0;height:32px;cursor:pointer;background:#f6f6f6;color:#333;border:1px solid #dedede';b.setAttribute('aria-pressed',String(b.dataset.choice===state));if(b.dataset.choice===state&&state!=='none'){b.textContent=state==='later'?'已待看':'已设为不想看';b.style.color='#fa6725';b.style.borderColor='#fa6725';}if(b.dataset.choice==='none'){b.hidden=state==='none';if(b.hidden)b.style.display='none';}});
+      detailActions.querySelectorAll('button').forEach(b=>{b.className='byte-btn byte-btn-default byte-btn-size-large byte-btn-shape-square muye-button';b.style.cssText='position:static;padding:0 14px;min-width:70px;width:auto!important;margin:0;height:32px;cursor:pointer;background:#f6f6f6;color:#333;border:1px solid #dedede';b.setAttribute('aria-pressed',String(b.dataset.choice===state));if(b.dataset.choice===state&&state!=='none'){b.textContent=state==='later'?'已加入候选':'已设为不想看';b.style.color='#fa6725';b.style.borderColor='#fa6725';}if(b.dataset.choice==='none'){b.hidden=state==='none';if(b.hidden)b.style.display='none';}});
     }else{detailActions.remove();detailFeedback.remove();}
     const mode=cq('filter').value,q=cq('query').value.trim().toLowerCase();const fragment=document.createDocumentFragment();
     for(const row of [...choices.values()].filter(r=>r.state===mode&&(!q||(r.title+' '+r.author).toLowerCase().includes(q))).sort((a,b)=>b.updatedAt-a.updatedAt)){
       const el=document.createElement('div'),a=document.createElement('a');a.href='/page/'+row.id;a.target='_blank';a.rel='noopener noreferrer';a.textContent=row.title;el.append(a);
-      const meta=document.createElement('div');const matched=config.words.filter(w=>normalize(w)&&[row.title,config.abstract?row.abstract||'':''].some(t=>normalize(t).includes(normalize(w))));meta.textContent=(row.author||'')+(matched.length?' · 命中关键词：'+matched.join('、'):'');el.append(meta);choiceButtons(row,el);fragment.append(el);
-    }cq('rows').replaceChildren(fragment);if(!cq('rows').children.length)cq('rows').textContent='暂无记录';
+      const meta=document.createElement('div');const matched=config.words.filter(w=>normalize(w)&&[row.title,config.abstract?row.abstract||'':''].some(t=>normalize(t).includes(normalize(w))));meta.textContent=(row.author||'')+(matched.length?' · 命中关键词：'+matched.join('、'):'');el.append(meta);choiceButtons(row,el);if(mode==='later')addSyncControls(row,el);fragment.append(el);
+    }cq('rows').replaceChildren(fragment);if(!cq('rows').children.length)cq('rows').textContent='暂无记录';renderSyncTools();
   }
   cq('open').onclick=()=>{choiceListOpen=true;renderChoices();};cq('close').onclick=()=>{if(drawerReady)closeDrawer();else{choiceListOpen=false;renderChoices();}};
   cq('filter').onchange=renderChoices;cq('query').oninput=renderChoices;
@@ -485,8 +625,8 @@
     return id;
   }
   async function refreshChoices(){try{const rows=await historyCall({action:'choices'});const stamp=JSON.stringify(rows);if(stamp!==choiceStamp){choiceStamp=stamp;choices=new Map(rows.map(r=>[r.id,r]));suppressAutoUntil=Date.now()+1500;scan();renderChoices();}}catch{}}
-  if(typeof FQ_CHOICE_WATCH==='function')FQ_CHOICE_WATCH(refreshChoices);
-  else setInterval(refreshChoices,2000);
+  if(typeof FQ_CHOICE_WATCH==='function')FQ_CHOICE_WATCH(async()=>{await refreshChoices();try{await loadSyncRecords();renderChoices();}catch{}});
+  else setInterval(async()=>{await refreshChoices();try{await loadSyncRecords();if(choiceListOpen)renderChoices();}catch{}},2000);
   window.addEventListener('focus',refreshChoices);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshChoices();});
   let detailKey='';setInterval(()=>{const key=location.pathname+'|'+(document.querySelector('h1')?.textContent||'');if(key!==detailKey){detailKey=key;renderChoices();}},700);
@@ -691,19 +831,19 @@
   host.style.cssText='display:none';choiceHost.style.cssText='display:none';
   const ruleStyle=document.createElement('style');ruleStyle.textContent='#open,h2,#history-back,#history-close,#close{display:none!important}#panel,#panel[data-view=history]{width:100%;max-height:none;overflow:visible;border:0;box-shadow:none;background:white;padding:16px 0;margin:0}#history-list{max-height:none;overflow:visible}#save{background:#ff5f16;border-color:#ff5f16}input{accent-color:#ff5f16}textarea{overscroll-behavior:contain}#history-open{display:none}#word-tags{display:flex;flex-wrap:wrap;gap:8px;max-height:180px;overflow:auto;overscroll-behavior:contain;padding:3px}.word-tag{display:inline-flex;align-items:center;gap:8px;background:#fff2e9;border:1px solid #ffdcc3;border-radius:6px;padding:4px 8px;color:#a54313;max-width:100%;overflow-wrap:anywhere}.word-tag button{border:0;background:transparent;color:#a54313;padding:0 4px;line-height:24px}.word-tag button:hover{background:#ffddc7}#words{height:86px}#word-preview,#word-feedback,.empty-words{font-size:13px;color:#777}';shadow.append(ruleStyle);
   const listStyle=document.createElement('style');listStyle.textContent='#box{border:0;padding:16px 0}#box>strong,#close,#filter{display:none!important}#query{padding:9px;border:1px solid #ddd;border-radius:6px;margin:8px 0}#rows>div{padding:14px 0}';cs.append(listStyle);
-  for(const [key,label] of [['later','待看'],['skip','不想看'],['rules','关键词规则'],['history','屏蔽记录']]){const button=document.createElement('button');button.textContent=label;button.dataset.tab=key;button.setAttribute('role','tab');button.onclick=()=>openDrawer(key);drawer.querySelector('#fq-drawer-tabs').append(button);}
+  for(const [key,label] of [['later','候选'],['skip','不想看'],['rules','关键词规则'],['history','屏蔽记录']]){const button=document.createElement('button');button.textContent=label;button.dataset.tab=key;button.setAttribute('role','tab');button.onclick=()=>openDrawer(key);drawer.querySelector('#fq-drawer-tabs').append(button);}
   function openDrawer(tab){
     const opening=!drawerTab;
     if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
     drawerTab=tab;drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
     drawer.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
-    if(choiceListOpen){cq('filter').value=tab;renderChoices();}
+    if(choiceListOpen){cq('filter').value=tab;renderChoices();if(tab==='later'&&(opening||!syncAccount))refreshOfficial();}
     else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='rules'&&!drawerRulesLoaded){resetWordDraft();$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
     drawerBody.scrollTop=0;
     if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});
   }
   function closeDrawer(){
-    if(!drawerTab)return;drawerTab=null;drawerRulesLoaded=false;drawer.hidden=true;choiceListOpen=false;historyView=false;
+    if(!drawerTab)return;if(!cq('sync-review').hidden){cq('sync-review').hidden=true;syncBusy=false;}drawerTab=null;drawerRulesLoaded=false;drawer.hidden=true;choiceListOpen=false;historyView=false;
     host.style.display='none';choiceHost.style.display='none';$('panel').hidden=true;
     drawerReturn?.focus?.({preventScroll:true});
   }
@@ -751,7 +891,7 @@
   function mountFilterBar(){
     const anchor=document.querySelector('.muye-stack-book-list:not([data-fq-stream])')||document.querySelector('.rank-book-item')?.parentElement;
     filterBar.hidden=!supportedPage();if(anchor&&filterBar.nextElementSibling!==anchor)anchor.before(filterBar);
-    if(!supportedPage()&&!detailBook()&&drawerTab)closeDrawer();
+    if(!supportedPage()&&!detailBook()&&!/^\/bookshelf(?:\/|$)/.test(location.pathname)&&drawerTab)closeDrawer();
   }
   drawerReady=true;mountFilterBar();setInterval(mountFilterBar,700);
 

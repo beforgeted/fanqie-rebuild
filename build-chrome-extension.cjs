@@ -15,13 +15,13 @@ const manifest = {
     js:['content.js'], run_at:'document_idle', all_frames:false
   }]
 };
-const adapter = `// Local Chrome extension adapter. No remote resources or network requests.
+const adapter = `// Local Chrome extension adapter. User-initiated shelf sync uses official same-origin APIs.
 (async () => {
   const cache = await chrome.storage.local.get(['fq-keyword-filter-v1','fq-infinite-enabled']);
   function GM_getValue(key, fallback) { return Object.hasOwn(cache, key) ? cache[key] : fallback; }
   async function GM_setValue(key, value) { await chrome.storage.local.set({[key]:value}); cache[key] = value; }
-  function FQ_CHOICE_WATCH(fn) { chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&Object.keys(changes).some(k=>k.startsWith('fq-choice-')))fn();}); }
-  function GM_registerMenuCommand() {} // The page's floating panel provides settings.
+  function FQ_CHOICE_WATCH(fn) { chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&Object.keys(changes).some(k=>k.startsWith('fq-choice-')||k.startsWith('fq-official-sync-')))fn();}); }
+  function GM_registerMenuCommand() {} // The integrated page drawer provides settings.
   async function FQ_HISTORY(message) {
     const response = await chrome.runtime.sendMessage({channel:'fq-filter-history',...message});
     if (!response?.ok) throw new Error(response?.error || '记录操作失败');

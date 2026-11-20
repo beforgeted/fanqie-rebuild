@@ -106,12 +106,12 @@ const records=()=>Object.entries(values).filter(([key])=>key.startsWith('fq-hist
   assert.equal(b.document.querySelector('.stack-book-item').getAttribute('data-fq-keyword-blocked'),'hide');
   a.document.querySelector('.fq-choice-actions [data-choice=later]').click();await wait(100);
   b.dispatchEvent(new b.Event('focus'));await wait(100);
-  assert.equal(b.document.querySelector('.fq-choice-state').textContent,'已待看');
+  assert.equal(b.document.querySelector('.fq-choice-state').textContent,'已加入候选');
   assert.equal(b.document.querySelector('.stack-book-item').getAttribute('data-fq-keyword-blocked'),'hide','later does not bypass keywords');
   failWrites=true;
   a.document.querySelector('.fq-choice-actions [data-choice=skip]').click();await wait(100);
   assert.match(choiceA.getElementById('msg').textContent,/保存失败/);
-  assert.equal(a.document.querySelector('.fq-choice-state').textContent,'已待看');failWrites=false;
+  assert.equal(a.document.querySelector('.fq-choice-state').textContent,'已加入候选');failWrites=false;
   a.document.querySelector('.fq-choice-actions [data-choice=none]').click();await wait(100);
   assert.equal(a.document.querySelector('.fq-choice-state').textContent,'未标记');
   const nativeButton=a.document.createElement('button');nativeButton.className='add-bookshelf-btn';nativeButton.textContent='加入书架';
