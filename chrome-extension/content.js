@@ -13,7 +13,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.5.1
+// @version      1.6.0
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -149,6 +149,7 @@
     enabled: saved?.enabled !== false,
     abstract: saved?.abstract !== false
   };
+  let drawerReady=false,drawerTab=null,drawer=null,drawerReturn=null,drawerRulesLoaded=false;
   let reveal = false;
   let timer;
   let lastPath = location.pathname + location.search;
@@ -202,7 +203,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.5.1</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.6.0</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -326,6 +327,7 @@
     });
   }
   function openPanel() {
+    if(drawerReady){openDrawer('rules');return;}
     $('words').value = config.words.join('\n');
     $('enabled').checked = config.enabled;
     $('abstract').checked = config.abstract;
@@ -334,6 +336,7 @@
     if (historyView) refreshHistory();
   }
   function closePanel() {
+    if(drawerReady){closeDrawer();return;}
     $('panel').hidden = true;
     $('open').setAttribute('aria-expanded', 'false');
   }
@@ -400,7 +403,7 @@
   `;document.head.append(layoutStyle);
   const navChoice=document.createElement('div');navChoice.className='nav-item';
   const navLink=document.createElement('a');navLink.href='#fq-my-books';navLink.textContent='我的选书';navChoice.append(navLink);
-  navLink.onclick=e=>{e.preventDefault();choiceListOpen=!choiceListOpen;renderChoices();if(choiceListOpen)choiceHost.scrollIntoView({block:'start',behavior:'smooth'});};
+  navLink.onclick=e=>{e.preventDefault();if(drawerTab)closeDrawer();else openDrawer('later');};
   const cq=id=>cs.getElementById(id);
   const stateLabel=state=>({later:'已待看',skip:'不想看',none:'未标记'}[state]||'未标记');
   function choiceButtons(book,parent) {
@@ -418,7 +421,7 @@
       cq('msg').replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));
       const undo=document.createElement('button');undo.textContent='撤销';undo.onclick=()=>choose(book,prior);cq('msg').append(undo);
       if(detailBook()){detailFeedback.replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));const back=undo.cloneNode(true);back.onclick=()=>choose(book,prior);detailFeedback.append(back);}
-    } catch {const error='保存失败，请重试；原标记未改变。';cq('msg').textContent=error;if(detailBook())detailFeedback.textContent=error;else{choiceListOpen=true;renderChoices();}}
+    } catch {const error='保存失败，请重试；原标记未改变。';cq('msg').textContent=error;if(detailBook())detailFeedback.textContent=error;else if(drawerReady){openDrawer(prior==='skip'?'skip':'later');}else{choiceListOpen=true;renderChoices();}}
     finally{choiceBusy=false;}
   }
   function detailBook(){const id=location.pathname.match(/^\/page\/(\d+)/)?.[1];const title=document.querySelector('h1')?.textContent.trim();return id&&title?{id,title,abstract:document.querySelector('.page-abstract-content')?.textContent||'',author:document.querySelector('.author-name')?.textContent.trim()||''}:null;}
@@ -426,10 +429,10 @@
     const detail=detailBook();
     const libraryLink=document.querySelector('a[href="/library"]');
     if(libraryLink?.parentElement?.parentElement&&!navChoice.isConnected)libraryLink.parentElement.after(navChoice);
-    const anchor=detail?(document.querySelector('.page-header')||document.querySelector('.page-header-info')):document.querySelector('.muye-stack-book-list:not([data-fq-stream])');
+    const anchor=drawerReady?null:detail?(document.querySelector('.page-header')||document.querySelector('.page-header-info')):document.querySelector('.muye-stack-book-list:not([data-fq-stream])');
     if(anchor&&!choiceHost.isConnected)anchor.before(choiceHost);
     if(anchor&&choiceHost.parentElement!==anchor.parentElement)anchor.before(choiceHost);
-    choiceHost.hidden=!choiceListOpen||(!supportedPage()&&!detail);choiceHost.style.display=choiceHost.hidden?'none':'block';cq('box').hidden=false;cq('open').hidden=true;cq('current').hidden=true;
+    choiceHost.hidden=drawerReady?!['later','skip'].includes(drawerTab):!choiceListOpen||(!supportedPage()&&!detail);choiceHost.style.display=choiceHost.hidden?'none':'block';cq('box').hidden=false;cq('open').hidden=true;cq('current').hidden=true;
     detailActions.replaceChildren();
     const original=document.querySelector('.add-bookshelf-btn');
     if(detail&&original){
@@ -445,7 +448,7 @@
       const meta=document.createElement('div');const matched=config.words.filter(w=>normalize(w)&&[row.title,config.abstract?row.abstract||'':''].some(t=>normalize(t).includes(normalize(w))));meta.textContent=(row.author||'')+(matched.length?' · 命中关键词：'+matched.join('、'):'');el.append(meta);choiceButtons(row,el);fragment.append(el);
     }cq('rows').replaceChildren(fragment);if(!cq('rows').children.length)cq('rows').textContent='暂无记录';
   }
-  cq('open').onclick=()=>{choiceListOpen=true;renderChoices();};cq('close').onclick=()=>{choiceListOpen=false;renderChoices();};
+  cq('open').onclick=()=>{choiceListOpen=true;renderChoices();};cq('close').onclick=()=>{if(drawerReady)closeDrawer();else{choiceListOpen=false;renderChoices();}};
   cq('filter').onchange=renderChoices;cq('query').oninput=renderChoices;
   const wiredChoices=new WeakSet();
   function attachChoices(card){
@@ -466,7 +469,7 @@
     observer.disconnect();
     try {
       const active = supportedPage();
-      host.hidden = !active;
+      host.hidden = drawerReady?false:!active;
       if (!active) {
         document.querySelectorAll(`[${MARK}]`).forEach(card => card.removeAttribute(MARK));
         alignLibraryCards();
@@ -501,6 +504,7 @@
       $('warning').textContent = unknown ? `${unknown} 本含尚未识别的字体字符，可能漏屏蔽。` : cards.length ? '' : '尚未识别到书籍；请等加载完成。若列表已出现，网站结构可能已更新。';
       $('reveal').textContent = reveal ? '重新隐藏命中书籍' : '临时显示已屏蔽';
       rememberCards(records);
+      if(drawerReady)updateFilterBar(cards.length,hits);
       if (typeof stream !== 'undefined') updateStreamStatus();
     } finally { observe(); }
   }
@@ -564,7 +568,7 @@
   }
   async function loadStream(manual=false) {
     const s=stream;
-    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||Date.now()<suppressAutoUntil)))return;
+    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||Date.now()<suppressAutoUntil)))return;
     if(s.key!==routeKey())return;
     if(manual){s.empty=0;s.error='';}
     s.loading=true;updateStreamStatus();
@@ -632,6 +636,96 @@
     io.observe(controls);scan();updateStreamStatus();if(reseed)loadStream(true);
   }
   setInterval(syncStream,700);
+
+
+  // One in-page management drawer; existing storage keys and panel handlers are retained.
+  const filterBar=document.createElement('div');filterBar.id='fq-filter-bar';
+  filterBar.style.cssText='position:sticky;top:80px;z-index:100;background:white;max-width:1160px;margin:16px auto;border-bottom:1px solid #eee';
+  const bs=filterBar.attachShadow({mode:'open'});
+  bs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#333}#bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 8px;background:#fff}button{font:inherit;color:#555;background:#fff;border:1px solid #ddd;border-radius:6px;padding:5px 10px;cursor:pointer}label{white-space:nowrap}input{accent-color:#ff5f16}#summary{font-size:12px;color:#777}#error{color:#a33}#words{max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style><div id="bar"><label><input id="enabled" type="checkbox">关键词过滤</label><button id="words"></button><label><input id="abstract" type="checkbox">匹配简介</label><button id="reveal">临时显示隐藏书籍</button><button id="records">屏蔽记录</button><button id="browse">浏览设置</button><span id="summary"></span><span id="error" role="status"></span></div>';
+  const bq=id=>bs.getElementById(id);
+  const overlayStyle=document.createElement('style');
+  overlayStyle.textContent=`
+    #fq-drawer[hidden]{display:none!important}
+    #fq-drawer{position:fixed;inset:0;z-index:2147483600;background:#0004;font:14px/1.6 system-ui;color:#333}
+    #fq-drawer-dialog{position:absolute;top:80px;left:50%;transform:translateX(-50%);width:min(1120px,calc(100vw - 40px));max-height:min(75dvh,calc(100dvh - 104px));display:flex;flex-direction:column;background:#fff;border-radius:0 0 12px 12px;box-shadow:0 12px 40px #0002;overflow:hidden}
+    #fq-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #eee}
+    #fq-drawer-tabs{display:flex;gap:12px;flex-wrap:wrap;padding:0 24px;border-bottom:1px solid #eee}
+    #fq-drawer button{font:inherit;cursor:pointer}
+    #fq-drawer-tabs button{border:0;background:transparent;padding:12px;color:#666}
+    #fq-drawer-tabs button[aria-selected=true]{color:#ee642d;border-bottom:2px solid #ee642d}
+    #fq-drawer-close{border:0;background:transparent;padding:4px 12px;font-size:20px}
+    #fq-drawer-body{overflow:auto;overscroll-behavior:contain;min-height:0;padding:4px 24px 20px}
+    #fq-drawer-body>#fq-keyword-filter-host,#fq-drawer-body>#fq-choice-host{position:static!important;margin:0!important;width:100%!important;max-width:none!important}
+  `;document.head.append(overlayStyle);
+  drawer=document.createElement('div');drawer.id='fq-drawer';drawer.hidden=true;
+  drawer.innerHTML='<section id="fq-drawer-dialog" role="dialog" aria-modal="true" aria-labelledby="fq-drawer-title"><div id="fq-drawer-head"><strong id="fq-drawer-title">我的选书与筛选</strong><button id="fq-drawer-close" aria-label="关闭">×</button></div><div id="fq-drawer-tabs" role="tablist"></div><div id="fq-drawer-body"></div></section>';
+  document.body.append(drawer);
+  const drawerBody=drawer.querySelector('#fq-drawer-body');drawerBody.append(choiceHost,host);
+  host.style.cssText='display:none';choiceHost.style.cssText='display:none';
+  const ruleStyle=document.createElement('style');ruleStyle.textContent='#open,h2,#history-back,#history-close,#close{display:none!important}#panel,#panel[data-view=history]{width:100%;max-height:none;overflow:visible;border:0;box-shadow:none;background:white;padding:16px 0;margin:0}#history-list{max-height:none;overflow:visible}#save{background:#ff5f16;border-color:#ff5f16}input{accent-color:#ff5f16}textarea{overscroll-behavior:contain}#history-open{display:none}';shadow.append(ruleStyle);
+  const listStyle=document.createElement('style');listStyle.textContent='#box{border:0;padding:16px 0}#box>strong,#close,#filter{display:none!important}#query{padding:9px;border:1px solid #ddd;border-radius:6px;margin:8px 0}#rows>div{padding:14px 0}';cs.append(listStyle);
+  for(const [key,label] of [['later','待看'],['skip','不想看'],['rules','关键词规则'],['history','屏蔽记录']]){const button=document.createElement('button');button.textContent=label;button.dataset.tab=key;button.setAttribute('role','tab');button.onclick=()=>openDrawer(key);drawer.querySelector('#fq-drawer-tabs').append(button);}
+  function openDrawer(tab){
+    const opening=!drawerTab;
+    if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
+    drawerTab=tab;drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
+    drawer.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
+    if(choiceListOpen){cq('filter').value=tab;renderChoices();}
+    else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='rules'&&!drawerRulesLoaded){$('words').value=config.words.join('\n');$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
+    drawerBody.scrollTop=0;
+    if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});
+  }
+  function closeDrawer(){
+    if(!drawerTab)return;drawerTab=null;drawerRulesLoaded=false;drawer.hidden=true;choiceListOpen=false;historyView=false;
+    host.style.display='none';choiceHost.style.display='none';$('panel').hidden=true;
+    drawerReturn?.focus?.({preventScroll:true});
+  }
+  drawer.querySelector('#fq-drawer-close').onclick=closeDrawer;
+  drawer.onclick=e=>{if(e.target===drawer)closeDrawer();};
+  // Do not change root overflow: the site's scroll container resets when it changes.
+  // Only the drawer may consume scrolling while it is open.
+  drawer.addEventListener('wheel',e=>{
+    if(!e.composedPath().includes(drawerBody)||drawerBody.scrollHeight<=drawerBody.clientHeight)e.preventDefault();
+  },{passive:false});
+  drawer.addEventListener('touchmove',e=>{
+    if(!e.composedPath().includes(drawerBody)||drawerBody.scrollHeight<=drawerBody.clientHeight)e.preventDefault();
+  },{passive:false});
+  drawer.addEventListener('keydown',e=>{
+    const target=e.composedPath()[0];
+    const editable=target.matches?.('input,textarea,select,[contenteditable=true]');
+    if(!editable&&['ArrowDown','ArrowUp','PageDown','PageUp','Home','End',' '].includes(e.key)&&!(e.key===' '&&target.matches?.('button'))){
+      e.preventDefault();const step=e.key.startsWith('Arrow')?40:drawerBody.clientHeight*0.85;
+      if(e.key==='Home')drawerBody.scrollTop=0;else if(e.key==='End')drawerBody.scrollTop=drawerBody.scrollHeight;
+      else drawerBody.scrollTop+=(['ArrowUp','PageUp'].includes(e.key)||(e.key===' '&&e.shiftKey)?-step:step);
+    }
+    if(e.key==='Escape'){e.preventDefault();closeDrawer();}
+    if(e.key==='Tab'){
+      const roots=[drawer,shadow,cs];const items=roots.flatMap(r=>[...r.querySelectorAll('button,input,textarea,select,a[href]')]).filter(el=>!el.disabled&&el.getClientRects().length);
+      const current=shadow.activeElement||cs.activeElement||document.activeElement,index=items.indexOf(current);
+      if(items.length){e.preventDefault();const next=items[(index+(e.shiftKey?-1:1)+items.length)%items.length];next.focus({preventScroll:true});if(next.getRootNode()!==document){const rect=next.getBoundingClientRect(),bounds=drawerBody.getBoundingClientRect();if(rect.bottom>bounds.bottom)drawerBody.scrollTop+=rect.bottom-bounds.bottom;else if(rect.top<bounds.top)drawerBody.scrollTop+=rect.top-bounds.top;}}
+    }
+  });
+  $('history-open').onclick=()=>openDrawer('history');$('history-back').onclick=()=>openDrawer('rules');
+  bq('words').onclick=()=>openDrawer('rules');bq('records').onclick=()=>openDrawer('history');bq('browse').onclick=()=>{openDrawer('rules');toggle.focus({preventScroll:true});};
+  bq('reveal').onclick=()=>{$('reveal').click();};
+  for(const field of ['enabled','abstract'])bq(field).onchange=async()=>{
+    const next={...config,[field]:bq(field).checked};bq(field).disabled=true;
+    try{await GM_setValue(STORE,next);config=next;bq('error').textContent='';scan();}
+    catch{bq(field).checked=config[field];bq('error').textContent='保存失败，请重试';}finally{bq(field).disabled=false;}
+  };
+  function updateFilterBar(total,hits){
+    bq('enabled').checked=config.enabled;bq('abstract').checked=config.abstract;
+    bq('words').title=config.words.join('、');const words='屏蔽词 '+config.words.length+' 个 · 编辑';if(bq('words').textContent!==words)bq('words').textContent=words;
+    const summary='已加载 '+total+' 本 · '+(reveal?'命中':'隐藏')+' '+hits+' 本';if(bq('summary').textContent!==summary)bq('summary').textContent=summary;
+    bq('reveal').textContent=reveal?'恢复隐藏':'临时显示隐藏书籍';
+  }
+  function mountFilterBar(){
+    const anchor=document.querySelector('.muye-stack-book-list:not([data-fq-stream])')||document.querySelector('.rank-book-item')?.parentElement;
+    filterBar.hidden=!supportedPage();if(anchor&&filterBar.nextElementSibling!==anchor)anchor.before(filterBar);
+    if(!supportedPage()&&!detailBook()&&drawerTab)closeDrawer();
+  }
+  drawerReady=true;mountFilterBar();setInterval(mountFilterBar,700);
 
   scan();
   syncStream();

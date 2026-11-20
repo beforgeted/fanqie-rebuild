@@ -17,9 +17,9 @@ context.importScripts = name=>vm.runInContext(fs.readFileSync(path.join(__dirnam
 vm.runInContext(fs.readFileSync(path.join(__dirname,'history-background.js'),'utf8'),context);
 const send = (message,url='https://fanqienovel.com/library')=>new Promise(resolve=>listener({channel:'fq-filter-history',...message},{id:'test-extension',url},resolve));
 function page(title='原神：旅途',id='1234567890123456789') {
-  const dom = new JSDOM('<html><body><main><div class="stack-book-item"><div class="book-item-text"><a class="book-item-title"></a><div class="book-item-desc">作者：测试作者</div><div class="book-item-abstract">冒险故事</div></div></div></main></body></html>',{url:'https://fanqienovel.com/library/test',runScripts:'outside-only'});
+  const dom = new JSDOM('<html><body><nav><div class="nav-item"><a href="/library">书库</a></div></nav><main class="muye-stack-book-list"><div class="stack-book-item"><div class="book-item-text"><a class="book-item-title"></a><div class="book-item-desc">作者：测试作者</div><div class="book-item-abstract">冒险故事</div></div></div></main></body></html>',{url:'https://fanqienovel.com/library/test',runScripts:'outside-only'});
   const w=dom.window; windows.push(w);
-  const a=w.document.querySelector('a'); a.textContent=title; a.href='/page/'+id;
+  const a=w.document.querySelector('.book-item-title'); a.textContent=title; a.href='/page/'+id;
   w.chrome={storage:{local:storage},runtime:{sendMessage:send}};
   w.navigator.clipboard={writeText:async text=>{w.copied=text;}};
   w.Blob=Blob; w.URL.createObjectURL=blob=>{w.exported=blob;return 'blob:test';}; w.URL.revokeObjectURL=()=>{};
@@ -33,7 +33,21 @@ const records=()=>Object.entries(values).filter(([key])=>key.startsWith('fq-hist
   assert.equal(records().length,1,'two tabs deduplicate');
   assert.equal(records()[0].author,'测试作者');
   const firstSeen=records()[0].firstSeen;
-  const sh=shadow(a); sh.getElementById('open').click(); sh.getElementById('history-open').click(); await wait(60);
+  const sh=shadow(a);
+  const drawer=a.document.getElementById('fq-drawer'),bar=a.document.getElementById('fq-filter-bar').shadowRoot;
+  const nav=[...a.document.querySelectorAll('.nav-item a')].find(el=>el.textContent==='我的选书');
+  const url=a.location.href,htmlStyle=a.document.documentElement.getAttribute('style');
+  nav.onclick(new a.Event('click',{cancelable:true}));assert.equal(drawer.hidden,false);
+  assert.equal(drawer.querySelector('[aria-selected=true]').dataset.tab,'later');
+  const wheel=new a.WheelEvent('wheel',{bubbles:true,cancelable:true});drawer.dispatchEvent(wheel);assert.equal(wheel.defaultPrevented,true,'backdrop wheel is contained');
+  drawer.dispatchEvent(new a.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(drawer.hidden,true);
+  assert.equal(a.location.href,url,'opening never changes URL');assert.equal(a.document.documentElement.getAttribute('style'),htmlStyle,'opening never changes the page scroll container');
+  bar.getElementById('words').click();sh.getElementById('words').value='未保存草稿';drawer.querySelector('[data-tab=later]').click();drawer.querySelector('[data-tab=rules]').click();assert.equal(sh.getElementById('words').value,'未保存草稿','tab switches retain unsaved edits');
+  drawer.querySelector('#fq-drawer-close').click();bar.getElementById('words').click();assert.match(sh.getElementById('words').value,/原神/,'reopening uses saved rules');
+  drawer.querySelector('#fq-drawer-close').click();bar.getElementById('records').click();assert.equal(drawer.querySelector('[aria-selected=true]').dataset.tab,'history');
+  drawer.click();assert.equal(drawer.hidden,true,'backdrop closes');
+  console.log('PASS drawer: inline filter entries, tabs, draft retention, Escape/backdrop, URL and root-style preservation, wheel containment');
+  sh.getElementById('open').click(); sh.getElementById('history-open').click(); await wait(60);
   assert.equal(sh.querySelectorAll('#history-list li[data-book-id]').length,1);
   sh.querySelector('.history-actions button').click(); await wait(10); assert.equal(a.copied,'原神：旅途');
   await Promise.all([
