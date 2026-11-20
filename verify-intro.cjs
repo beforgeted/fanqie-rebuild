@@ -39,6 +39,14 @@ const snapshot=()=>({y:w.scrollY,url:w.location.href,html:w.document.documentEle
  const wheel=new w.WheelEvent('wheel',{bubbles:true,cancelable:true});q('close').dispatchEvent(wheel);assert.ok(wheel.defaultPrevented);
  const space=new w.KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true});q('body').dispatchEvent(space);assert.ok(space.defaultPrevented);assert.deepEqual(snapshot(),before);
  root().dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(host().hidden,true);
+ // Larger text-area target, including nested text, must preserve link and selection behavior.
+ for(const selector of ['.book-item-desc','.book-item-abstract','.book-item-footer','.book-item-text']){
+  cards()[0].querySelector(selector).click();assert.equal(host().hidden,false);q('close').click();
+ }
+ cards()[0].querySelector('.book-item-abstract').click();cards()[0].querySelector('.book-item-desc').click();assert.equal(host().hidden,false,'same card remains open');q('close').click();
+ const title=cards()[0].querySelector('a');title.addEventListener('click',e=>e.preventDefault(),{once:true});title.click();assert.equal(host().hidden,true,'title keeps original action');
+ const selection=w.getSelection(),range=w.document.createRange();range.selectNodeContents(cards()[0].querySelector('.book-item-abstract'));selection.removeAllRanges();selection.addRange(range);assert.ok(selection.toString(),'selection fixture is active');cards()[0].querySelector('.book-item-abstract').click();assert.equal(host().hidden,true,'selecting text must not open preview');selection.removeAllRanges();
+ assert.deepEqual(snapshot(),before);
  let release;
  reply=()=>new Promise(r=>release=r);
  open(1);await until(()=>!!release);open(0);await until(()=>q('status-text').textContent==='完整简介');
