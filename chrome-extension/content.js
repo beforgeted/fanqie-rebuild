@@ -13,7 +13,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.9.0
+// @version      1.9.1
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -287,7 +287,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.9.0</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.9.1</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -547,7 +547,6 @@
   function addSyncControls(row,el){
     const current=syncStatus(row.id),check=document.createElement('input');check.type='checkbox';check.className='candidate-check';check.checked=selectedCandidates.has(row.id);check.disabled=syncBusy||syncLoading||current.status==='success';check.setAttribute('aria-label','选择候选：'+row.title);check.onchange=()=>{check.checked?selectedCandidates.add(row.id):selectedCandidates.delete(row.id);renderChoices();};el.prepend(check);
     const line=document.createElement('div');line.className='sync-state';line.dataset.status=current.status;line.textContent=current.label;el.append(line);
-    const action=document.createElement('button');action.className='sync-one';action.textContent=current.status==='success'?'已同步':current.status==='failed'?'重试加入官方待看':'加入官方待看';action.disabled=syncBusy||syncLoading||current.status==='success';action.onclick=()=>prepareSync([row.id]);el.append(action);
   }
   async function prepareSync(ids){
     if(syncBusy||syncLoading)return;
@@ -669,16 +668,16 @@
     ':host([data-review=true]) #msg{height:24px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#msg:empty{visibility:hidden}',
     ':host([data-review=true]) #review-layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,42%) minmax(0,1fr);border-top:1px solid #eee8e3}',
     ':host([data-review=true]) #rows{overflow:auto;overscroll-behavior:contain;overflow-anchor:none;scrollbar-gutter:stable;min-height:0;padding-right:12px}',
-    ':host([data-review=true]) #rows>.review-row{display:grid;grid-template-columns:20px 76px minmax(0,1fr);grid-template-rows:1fr auto;gap:6px 10px;padding:14px 8px!important;min-height:140px;border-bottom:1px solid #eee8e3;border-left:3px solid transparent;background:white}',
+    ':host([data-review=true]) #rows>.review-row{display:grid;grid-template-columns:20px 76px minmax(0,1fr);grid-template-rows:1fr;gap:6px 10px;padding:14px 8px!important;min-height:140px;border-bottom:1px solid #eee8e3;border-left:3px solid transparent;background:white}',
     ':host([data-review=true]) #rows>.review-row[data-active=true]{background:#fff7f0;border-left-color:#ed6b32}:host([data-review=true]) #rows>.review-row:hover{background:#fffbf7}',
     '.review-row>.candidate-check{grid-column:1;grid-row:1;align-self:start;margin:5px 0;width:15px;height:15px}',
     '.review-cover{position:relative;display:block;width:76px;height:104px;overflow:hidden;flex-shrink:0;background:linear-gradient(145deg,#f0e4d7,#e0d2c5);border:1px solid #e8dfd8;border-radius:6px;padding:0!important;margin:0!important;box-shadow:0 3px 8px #3925140d}',
-    '.review-row>.review-cover{grid-column:2;grid-row:1/3}.review-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.cover-placeholder{height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;color:#8a7767}',
+    '.review-row>.review-cover{grid-column:2;grid-row:1}.review-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.cover-placeholder{height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;color:#8a7767}',
     '.review-badge{position:absolute;right:3px;top:4px;max-width:calc(100% - 6px);border:1px solid #ffffffb3;border-radius:5px;padding:2px 5px;line-height:1.5;font-size:10px;font-weight:600;color:#514a42;background:#ffffffe6;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 1px 5px #0002;white-space:nowrap}',
     '.review-badge[data-status=success]{color:#21573e;background:#e5f7ede6}.review-badge[data-status=failed]{color:#a23e29;background:#fff0e8ed}.review-badge[data-status=syncing],.review-badge[data-status=queued]{color:#a3571f;background:#fff2dce6}',
     '.review-row-main{grid-column:3;min-width:0}.review-open{display:block;text-align:left;border:0;background:transparent!important;margin:0!important;padding:0!important;color:#302721;font-size:14px;line-height:1.6;font-weight:600;max-width:100%;overflow-wrap:anywhere}',
     '.review-row-author,.review-row-meta{font-size:12px;color:#8b8077;line-height:1.6;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.review-row-meta{color:#a0958c}.review-row-snippet{font-size:12px;color:#71675f;margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.6}.review-row-note{min-height:18px;font-size:11px;color:#ad6d43;margin-top:4px}',
-    '.review-row>.sync-one{grid-column:3;justify-self:start;font-size:11px;margin:0;padding:3px 7px;background:#fff;border-color:#ead8cb}.review-row>.sync-state{display:none}',
+    '.review-row>.sync-state{display:none}',
     '#review-reader{min-width:0;min-height:0;border-left:1px solid #eee8e3;padding-left:20px;overflow:hidden}#review-empty{display:grid;height:100%;place-content:center;text-align:center;color:#9b8d82;padding:20px}',
     '#review-content{height:100%;display:flex;flex-direction:column;min-height:0}#review-content>header{padding:14px 0 9px;flex-shrink:0}#review-book-head{display:flex;gap:16px;align-items:center;min-width:0}#review-book-head>div:last-child{min-width:0}',
     '.reader-cover{width:84px;height:114px}.review-eyebrow{font-size:10px;color:#b07955;letter-spacing:2px}#review-title{display:block!important;font-size:18px;line-height:1.5;color:#33291f;margin:5px 0;max-height:54px;overflow:auto;overscroll-behavior:contain}#review-author,#review-meta{font-size:12px;color:#897b70;margin:3px 0}#review-meta{max-height:38px;overflow:auto;overscroll-behavior:contain}',
@@ -687,7 +686,7 @@
     '#review-content footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex-shrink:0;padding:10px 0 0;border-top:1px solid #eee8e3}#review-content footer button{margin:0;font-size:12px;padding:7px 10px}#review-content .primary{background:#f36b2a;color:white;border-color:#f36b2a}#review-content footer a{font-size:11px;margin-left:auto;color:#a75b32;text-decoration:none}',
     '#review-note{flex-shrink:0;padding:8px 0;position:relative}#note-toggle{border:0;background:transparent;padding:0;margin:0;font-size:12px;color:#a57857}#note-input{width:100%;height:62px;resize:none;border:1px solid #e6d9cc;border-radius:6px;padding:8px;font:12px/1.6 inherit;background:#fffcf8;color:#594638;overscroll-behavior:contain}#note-editor{position:absolute;left:0;right:0;bottom:100%;padding:12px;background:#fffcf8;border:1px solid #e6d9cc;border-radius:8px;box-shadow:0 -4px 20px #35241414;z-index:2}.note-toolbar{display:flex;align-items:center;gap:6px;min-height:28px}#note-message{font-size:11px;color:#a57857;flex:1}#note-save,#note-latest{font-size:11px;padding:3px 7px;margin:0}',
     '#official-tools{position:relative}#sync-review{position:absolute;left:0;right:0;top:100%;z-index:4;max-height:190px;box-shadow:0 8px 24px #0002;overflow:auto;overscroll-behavior:contain}#sync-review ul{max-height:70px}button:focus-visible,a:focus-visible,textarea:focus-visible{outline:2px solid #ed884f;outline-offset:2px}',
-    '@media(max-width:760px){:host([data-review=true]) #review-search{gap:6px}#review-count{display:none}:host([data-review=true]) #review-layout{grid-template-columns:minmax(160px,36%) minmax(0,1fr)}:host([data-review=true]) #rows>.review-row{grid-template-columns:17px minmax(0,1fr);gap:6px}.review-row>.review-cover{grid-column:2;grid-row:1}.review-row-main,.review-row>.sync-one{grid-column:2}.review-row>.candidate-check{grid-column:1}.review-row-snippet,.review-row-meta{display:none}#review-reader{padding-left:12px}.reader-cover{width:60px;height:82px}#review-title{font-size:15px}}',
+    '@media(max-width:760px){:host([data-review=true]) #review-search{gap:6px}#review-count{display:none}:host([data-review=true]) #review-layout{grid-template-columns:minmax(160px,36%) minmax(0,1fr)}:host([data-review=true]) #rows>.review-row{grid-template-columns:17px minmax(0,1fr);gap:6px}.review-row>.review-cover{grid-column:2;grid-row:1}.review-row-main,.review-row>.candidate-check{grid-column:1}.review-row-snippet,.review-row-meta{display:none}#review-reader{padding-left:12px}.reader-cover{width:60px;height:82px}#review-title{font-size:15px}}',
     '@media(max-height:760px){#review-book-head{max-height:74px;overflow:auto;overscroll-behavior:contain}.review-eyebrow{display:none}.review-statusline{height:20px}#review-meta{max-height:19px}.reader-cover{width:44px;height:60px}#review-content>header{padding-top:8px}#review-title{font-size:16px;max-height:48px}#note-input{height:48px}#review-content footer{padding-top:6px}#review-content footer button{padding:5px 7px}}'
   ].join('\n');cs.append(reviewStyle);
   cq('sync-review').setAttribute('data-review-scroll','');
@@ -720,7 +719,6 @@
       reviewSet(el.querySelector('.review-row-note'),noteDrafts.get(row.id)?.dirty?'有未保存的备注':row.note?'有备注':'');
       paintCover(el.querySelector('img'),row.cover);paintBadge(el.querySelector('.review-badge'),status);
       const check=el.querySelector('.candidate-check');check.checked=selectedCandidates.has(row.id);check.disabled=syncBusy||syncLoading||status.status==='success';
-      const action=el.querySelector('.sync-one');action.style.visibility=status.status==='success'?'hidden':'';action.disabled=syncBusy||syncLoading||status.status==='success';reviewSet(action,status.status==='success'?'已同步':status.status==='failed'?'重试同步':'加入官方待看');
       const line=el.querySelector('.sync-state');line.dataset.status=status.status;reviewSet(line,status.label);
       if(choiceListOpen&&drawerTab==='later'&&!safeCover(row.cover)&&!reviewHydrationTried.has(row.id)){if(reviewCoverObserver)reviewCoverObserver.observe(el);else if(index<6){reviewQueue.add(row.id);}}
     }
@@ -990,7 +988,7 @@
   }
   async function loadStream(manual=false) {
     const s=stream;
-    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||intro||Date.now()<suppressAutoUntil)))return;
+    if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||intro||filterToolsOpen||Date.now()<suppressAutoUntil)))return;
     if(s.key!==routeKey())return;
     if(manual){s.empty=0;s.error='';}
     s.loading=true;updateStreamStatus();
@@ -1062,11 +1060,34 @@
 
   // One in-page management drawer; existing storage keys and panel handlers are retained.
   const filterBar=document.createElement('div');filterBar.id='fq-filter-bar';
-  filterBar.style.cssText='position:sticky;top:80px;z-index:100;background:white;max-width:1160px;margin:16px auto;border-bottom:1px solid #eee';
+  filterBar.style.cssText='position:fixed;z-index:2147483550;width:340px;max-width:calc(100vw - 24px);left:12px;top:92px';
   const bs=filterBar.attachShadow({mode:'open'});
   bs.innerHTML='<style>:host{font:14px/1.6 system-ui;color:#333}#bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 8px;background:#fff}button{font:inherit;color:#555;background:#fff;border:1px solid #ddd;border-radius:6px;padding:5px 10px;cursor:pointer}label{white-space:nowrap}input{accent-color:#ff5f16}#summary{font-size:12px;color:#777}#error{color:#a33}#keyword-tags{display:flex;gap:6px;flex-wrap:wrap;padding:0 8px 12px;max-height:84px;overflow:auto;overscroll-behavior:contain}#keyword-tags:empty{display:none}.keyword-tag{background:#fff2e9;color:#a54313;border-radius:5px;padding:2px 8px;overflow-wrap:anywhere;max-width:100%}#words{max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style><div id="bar"><label><input id="enabled" type="checkbox">关键词过滤</label><button id="words"></button><label><input id="abstract" type="checkbox">匹配简介</label><button id="reveal">临时显示隐藏书籍</button><button id="records">屏蔽记录</button><button id="browse">浏览设置</button><span id="summary"></span><span id="error" role="status"></span></div><div id="keyword-tags" role="list" aria-label="当前生效的屏蔽词"></div>';
   const bq=id=>bs.getElementById(id);
-  const introNotice=document.createElement('div');introNotice.id='intro-notice';introNotice.hidden=true;introNotice.style.cssText='position:absolute;top:100%;left:0;padding:8px 12px;background:#fff7ef;border:1px solid #ffd8b9;border-radius:6px;box-shadow:0 4px 12px #0001';bs.append(introNotice);
+  const introNotice=document.createElement('div');introNotice.id='intro-notice';introNotice.hidden=true;introNotice.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:8px 12px;background:#fff7ef;border:1px solid #ffd8b9;border-radius:6px;box-shadow:0 4px 12px #0001';bs.append(introNotice);
+  // Reuse the site's right-hand tools; controls expand beside it without moving the book list.
+  let filterToolsOpen=false;
+  const filterPopup=document.createElement('section');filterPopup.id='filter-popover';filterPopup.hidden=true;filterPopup.setAttribute('role','dialog');filterPopup.setAttribute('aria-label','筛书设置');
+  filterPopup.innerHTML='<header><strong>筛书设置</strong><button id="tools-close" aria-label="收起筛书设置">×</button></header>';
+  bs.prepend(filterPopup);filterPopup.append(bq('bar'),bq('keyword-tags'));bq('enabled').parentElement.after(bq('abstract').parentElement);
+  const toolStyle=document.createElement('style');toolStyle.textContent='[hidden]{display:none!important}#filter-popover{background:#fff;border:1px solid #eee0d7;border-radius:10px;box-shadow:0 8px 32px #0002;max-height:calc(100dvh - 110px);overflow:auto;overscroll-behavior:contain}#filter-popover header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #f1e9e3}#tools-close{border:0;padding:0 5px;font-size:20px;background:transparent}#bar{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px}#bar label{font-size:13px}#words,#reveal,#records,#browse{max-width:none;width:100%;font-size:13px}#words,#reveal,#summary,#error{grid-column:1/-1}#keyword-tags{padding:0 14px 14px;max-height:150px}#summary{border-top:1px solid #eee;padding-top:10px}';
+  bs.append(toolStyle);
+  document.body.append(filterBar);
+  const filterTool=document.createElement('button');filterTool.id='fq-filter-tool';filterTool.type='button';filterTool.className='float-wrapper-item';filterTool.setAttribute('aria-label','打开筛书设置');filterTool.setAttribute('aria-haspopup','dialog');filterTool.setAttribute('aria-expanded','false');
+  filterTool.innerHTML='<svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2" fill="white"/><circle cx="15" cy="12" r="2" fill="white"/><circle cx="9" cy="18" r="2" fill="white"/></svg><span>筛书设置</span>';
+  const toolPageStyle=document.createElement('style');toolPageStyle.textContent='#fq-filter-tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;width:64px;height:64px;border:0;border-radius:6px;background:white;color:#333;font-family:inherit;font-size:12px;line-height:1.4;cursor:pointer;padding:6px;box-sizing:border-box}#fq-filter-tool:hover,#fq-filter-tool[aria-expanded=true]{background:#fff4ec;color:#ff681f}#fq-filter-tool:focus-visible{outline:2px solid #ff742b;outline-offset:2px}#fq-filter-tool[hidden],#fq-filter-bar[hidden]{display:none!important}#fq-tools-fallback{position:fixed;right:12px;bottom:120px;z-index:1000;padding:4px;background:white;border-radius:10px;box-shadow:0 6px 24px #0001}';
+  document.head.append(toolPageStyle);
+  const toolFallback=document.createElement('div');toolFallback.id='fq-tools-fallback';
+  function positionFilterTools(){if(!filterToolsOpen)return;const r=filterTool.getBoundingClientRect(),width=Math.min(340,innerWidth-24),height=filterPopup.getBoundingClientRect().height;filterBar.style.width=width+'px';filterBar.style.left=Math.max(12,Math.min(r.left-width-12,innerWidth-width-12))+'px';filterBar.style.top=Math.max(92,Math.min(r.top,innerHeight-height-12))+'px';}
+  function closeFilterTools(focus=false){filterToolsOpen=false;filterPopup.hidden=true;filterTool.setAttribute('aria-expanded','false');if(focus&&filterTool.isConnected)filterTool.focus({preventScroll:true});}
+  filterTool.onclick=()=>{if(filterToolsOpen){closeFilterTools(true);return;}if(drawerTab)closeDrawer();closeIntro(false);filterToolsOpen=true;filterPopup.hidden=false;filterTool.setAttribute('aria-expanded','true');positionFilterTools();bq('tools-close').focus({preventScroll:true});};
+  bq('tools-close').onclick=()=>closeFilterTools(true);
+  bs.addEventListener('keydown',e=>{if(e.key==='Escape'&&filterToolsOpen){e.preventDefault();closeFilterTools(true);}});
+  for(const type of ['wheel','touchmove'])bs.addEventListener(type,e=>{const scroller=e.composedPath().includes(bq('keyword-tags'))?bq('keyword-tags'):filterPopup;if(filterToolsOpen&&scroller.scrollHeight<=scroller.clientHeight)e.preventDefault();},{passive:false});
+  document.addEventListener('pointerdown',e=>{if(filterToolsOpen&&!e.composedPath().includes(filterBar)&&!e.composedPath().includes(filterTool))closeFilterTools();});
+  window.addEventListener('resize',positionFilterTools);
+
+
   const overlayStyle=document.createElement('style');
   overlayStyle.textContent=`
     #fq-drawer[hidden]{display:none!important}
@@ -1095,7 +1116,7 @@
   const listStyle=document.createElement('style');listStyle.textContent='#box{border:0;padding:16px 0}#box>strong,#close,#filter{display:none!important}#query{padding:9px;border:1px solid #ddd;border-radius:6px;margin:8px 0}#rows>div{padding:14px 0}';cs.append(listStyle);
   for(const [key,label] of [['later','候选'],['skip','不想看'],['rules','关键词规则'],['history','屏蔽记录']]){const button=document.createElement('button');button.textContent=label;button.dataset.tab=key;button.setAttribute('role','tab');button.onclick=()=>openDrawer(key);drawer.querySelector('#fq-drawer-tabs').append(button);}
   function openDrawer(tab){
-    closeIntro(false);
+    closeFilterTools();closeIntro(false);
     const opening=!drawerTab;
     if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
     drawerTab=tab;drawer.dataset.review=String(tab==='later');drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
@@ -1153,8 +1174,12 @@
   }
   function mountFilterBar(){
     if(intro){if(!supportedPage()||!intro.card.isConnected||intro.card.getAttribute(MARK)==='hide')closeIntro(false);else positionIntro();}
-    const anchor=document.querySelector('.muye-stack-book-list:not([data-fq-stream])')||document.querySelector('.rank-book-item')?.parentElement;
-    filterBar.hidden=!supportedPage();if(anchor&&filterBar.nextElementSibling!==anchor)anchor.before(filterBar);
+    const active=supportedPage(),native=document.querySelector('.float-wrapper');
+    filterBar.hidden=!active;filterTool.hidden=!active;
+    if(!active){closeFilterTools();toolFallback.remove();}
+    else if(native){if(filterTool.parentElement!==native)native.append(filterTool);toolFallback.remove();}
+    else{if(!toolFallback.isConnected)document.body.append(toolFallback);if(filterTool.parentElement!==toolFallback)toolFallback.append(filterTool);}
+    if(filterToolsOpen)positionFilterTools();
     if(!supportedPage()&&!detailBook()&&!/^\/bookshelf(?:\/|$)/.test(location.pathname)&&drawerTab)closeDrawer();
   }
   drawerReady=true;mountFilterBar();setInterval(mountFilterBar,700);

@@ -37,6 +37,13 @@ const records=()=>Object.entries(values).filter(([key])=>key.startsWith('fq-hist
   const drawer=a.document.getElementById('fq-drawer'),bar=a.document.getElementById('fq-filter-bar').shadowRoot;
   const nav=[...a.document.querySelectorAll('.nav-item a')].find(el=>el.textContent==='我的选书');
   const url=a.location.href,htmlStyle=a.document.documentElement.getAttribute('style');
+  const tool=a.document.getElementById('fq-filter-tool'),popup=bar.getElementById('filter-popover');
+  assert.ok(popup.hidden);tool.click();assert.equal(popup.hidden,false);assert.equal(tool.getAttribute('aria-expanded'),'true');
+  const sideWheel=new a.WheelEvent('wheel',{bubbles:true,cancelable:true});bar.getElementById('keyword-tags').dispatchEvent(sideWheel);assert.ok(sideWheel.defaultPrevented,'short tags do not scroll the book page');
+  bar.dispatchEvent(new a.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.ok(popup.hidden);assert.equal(a.document.activeElement,tool);
+  const native=a.document.createElement('div');native.className='float-wrapper';a.document.body.append(native);await wait(750);assert.equal(tool.parentElement,native,'joins native tools when available');
+  assert.equal(a.document.querySelectorAll('#fq-filter-tool').length,1);assert.equal(a.document.getElementById('fq-filter-bar').parentElement,a.document.body,'no top filter row remains');
+  tool.click();bar.getElementById('records').click();assert.ok(popup.hidden);assert.equal(drawer.querySelector('[aria-selected=true]').dataset.tab,'history');drawer.querySelector('#fq-drawer-close').click();
   nav.onclick(new a.Event('click',{cancelable:true}));assert.equal(drawer.hidden,false);
   assert.equal(drawer.querySelector('[aria-selected=true]').dataset.tab,'later');
   const wheel=new a.WheelEvent('wheel',{bubbles:true,cancelable:true});drawer.dispatchEvent(wheel);assert.equal(wheel.defaultPrevented,true,'backdrop wheel is contained');

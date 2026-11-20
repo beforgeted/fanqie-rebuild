@@ -40,7 +40,7 @@ const until=async fn=>{for(let i=0;i<180;i++){if(fn())return;await wait(20);}thr
   w.eval(source);await until(()=>w.document.getElementById('fq-drawer'));const sh=w.document.getElementById('fq-choice-host').shadowRoot,q=id=>sh.getElementById(id);
   [...w.document.querySelectorAll('.nav-item a')].find(e=>e.textContent==='我的选书').click();await until(()=>q('sync-message').textContent.includes('已核对')&&q('review-load').textContent==='完整简介');
   const select=id=>sh.querySelector('[data-id="'+id+'"] .review-open').click();
-  assert.equal(sh.querySelectorAll('.review-row').length,12);assert.equal(q('review-cover').src,'https://example.invalid/cover-200001.jpg','extract actual cover, never spinner');
+  assert.equal(sh.querySelectorAll('.review-row').length,12);assert.equal(sh.querySelectorAll('.sync-one').length,0,'single-book sync stays in the reader, not duplicated in rows');assert.equal(q('review-cover').src,'https://example.invalid/cover-200001.jpg','extract actual cover, never spinner');
   assert.equal(q('review-text').querySelector('img'),null);assert.equal(q('review-badge').textContent,'已同步');assert.equal(w.document.querySelector('#fq-intro-host').hidden,true,'no second popup');
   assert.deepEqual(requests.filter(x=>x.startsWith('/page/')),['/page/200001'],'do not fetch entire library');
   const initial={url:w.location.href,html:w.document.documentElement.getAttribute('style'),body:w.document.body.getAttribute('style')};
