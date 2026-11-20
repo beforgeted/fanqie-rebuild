@@ -1,6 +1,7 @@
 // GPL-3.0-only. Serialize history updates across tabs; no network access.
 importScripts('history-core.js');
 const historyStorage = {
+  atomicBackup: true,
   all: () => chrome.storage.local.get(null),
   get: async key => (await chrome.storage.local.get(key))[key],
   set: values => chrome.storage.local.set(values)
@@ -17,6 +18,6 @@ chrome.runtime.onMessage.addListener((message,sender,sendResponse) => {
   if (!authorized) { sendResponse({ok:false,error:'不支持的页面'}); return false; }
   const job = pending.then(()=>historyOperation(historyStorage,message));
   pending = job.catch(()=>{});
-  job.then(result=>sendResponse({ok:true,result}),()=>sendResponse({ok:false,error:'本地记录存储失败'}));
+  job.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:message.action?.startsWith('backup')?String(error.message||'本地记录存储失败').slice(0,300):'本地记录存储失败'}));
   return true;
 });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.10.1
+// @version      1.11.0
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -39,6 +39,7 @@
   // Shared with the extension service worker. Each book has its own key; writes
   // are serialized by the caller so records/handled marks survive tab races.
   async function historyOperation(storage, message) {
+    if(message.action==='backupExport'||message.action==='backupImport')return backupOperation(storage,message);
     if(message.action==='filterRead'||message.action==='filterSave'){
       const key='fq-keyword-filter-v1',state=filterState(await storage.get(key));
       if(message.action==='filterRead')return state;
@@ -146,6 +147,88 @@
   }
   function compileFilterWords(words){const entries=words.map(word=>({word,key:filterNormalize(word)})).filter(e=>e.key);return fields=>{const texts=fields.map(filterNormalize);return entries.filter(e=>texts.some(text=>text.includes(e.key))).map(e=>e.word);};}
 
+  const BACKUP_FORMAT='fanqie-rebuild-backup',BACKUP_LIMIT=10*1024*1024;
+  function backupClean(raw){
+    if(!raw||raw.format!==BACKUP_FORMAT||raw.version!==1)throw Error('不是支持的番茄配置包，或版本过新。');
+    if(JSON.stringify(raw).length>BACKUP_LIMIT)throw Error('配置包超过 10 MB。');
+    const data=raw.data;if(!data||data.settings?.schema!==2||typeof data.infiniteEnabled!=='boolean')throw Error('配置包缺少有效设置。');
+    const settings=filterState(data.settings);
+    const list=(rows,label,clean)=>{if(!Array.isArray(rows)||rows.length>50000)throw Error(label+'格式错误或数量过多。');const ids=new Set();return rows.map(row=>{if(!row||typeof row.id!=='string'||!/^\d{5,25}$/.test(row.id)||ids.has(row.id))throw Error(label+'含无效或重复书籍 ID。');ids.add(row.id);return clean(row);});};
+    const str=(value,max,required=false)=>{if(value===undefined&&!required)return '';if(typeof value!=='string'||value.length>max||(required&&!value.trim()))throw Error('配置包包含无效文字字段。');return value;};
+    const time=value=>{if(value===undefined)return 0;if(!Number.isSafeInteger(value)||value<0||value>8640000000000000)throw Error('配置包包含无效时间。');return value;};
+    const choices=list(data.choices,'个人标记',row=>{
+      if(!['none','later','skip'].includes(row.state))throw Error('配置包包含未知选书状态。');
+      const cover=str(row.cover,3000);if(cover){const u=new URL(cover);if(u.protocol!=='https:'||u.username||u.password)throw Error('封面链接无效。');}
+      return {id:row.id,title:str(row.title,500,true),author:str(row.author,200),abstract:str(row.abstract,12000),meta:str(row.meta,500),cover,state:row.state,note:str(row.note,2000),updatedAt:time(row.updatedAt),noteUpdatedAt:time(row.noteUpdatedAt)};
+    });
+    const history=list(data.history,'屏蔽记录',row=>{
+      if(!Array.isArray(row.matches)||row.matches.length>10000)throw Error('屏蔽记录的命中词无效。');
+      return {id:row.id,title:str(row.title,500,true),author:str(row.author,200),url:'https://fanqienovel.com/page/'+row.id,matches:[...new Set(row.matches.map(w=>str(w,200,true)))],firstSeen:time(row.firstSeen),lastSeen:time(row.lastSeen),handledAt:time(row.handledAt)};
+    });
+    return {format:BACKUP_FORMAT,version:1,exportedAt:typeof raw.exportedAt==='string'?raw.exportedAt:'',data:{settings:{schema:2,activeId:settings.activeId,profiles:settings.profiles},infiniteEnabled:data.infiniteEnabled,choices,history}};
+  }
+  function backupFromStorage(all){
+    const settings=filterState(all['fq-keyword-filter-v1']);
+    return backupClean({format:BACKUP_FORMAT,version:1,exportedAt:new Date().toISOString(),data:{settings,infiniteEnabled:all['fq-infinite-enabled']!==false,
+      choices:Object.entries(all).filter(([k,v])=>k.startsWith('fq-choice-')&&v&&k==='fq-choice-'+v.id).map(([,v])=>v),
+      history:Object.entries(all).filter(([k,v])=>k.startsWith('fq-history-book-')&&v&&k==='fq-history-book-'+v.id).map(([,v])=>v)}});
+  }
+  function backupPlan(all,raw,decisions={}){
+    const pack=backupClean(raw),incoming=pack.data,patch={},conflicts=[];
+    const local=filterState(all['fq-keyword-filter-v1']),profiles=JSON.parse(JSON.stringify(local.profiles)),fresh=!all['fq-keyword-filter-v1'];
+    if(fresh)profiles.length=0;
+    const profileShape=p=>JSON.stringify({name:p.name,enabled:p.enabled,abstract:p.abstract,groups:p.groups.map(g=>({name:g.name,enabled:g.enabled,words:g.words}))});
+    const conflict=(key,label,kind,before,after)=>{
+      const signature=JSON.stringify([before,after]),decision=Object.hasOwn(decisions,key)?decisions[key]:null;
+      if(decision?.signature===signature&&['local','file',...(kind==='profile'?['both']:[])].includes(decision.choice))return decision.choice;
+      conflicts.push({key,label,kind,before,after,signature});return 'local';
+    };
+    const uniqueName=(name,skip)=>{let candidate=name,n=1;while(profiles.some(p=>p.id!==skip&&p.name===candidate))candidate=name.slice(0,45)+'（导入 '+n+++'）';return candidate;};
+    const uniqueId=id=>{let next=id,n=1;while(profiles.some(p=>p.id===next))next=id.slice(0,75)+'-import-'+n++;return next;};
+    const importedIds=new Map();
+    for(const source of incoming.settings.profiles){
+      const importedCopy=profiles.find(p=>p.name.startsWith(source.name.slice(0,45)+'（导入 ')&&profileShape({...p,name:source.name})===profileShape(source));
+      if(importedCopy){importedIds.set(source.id,importedCopy.id);continue;}
+      const original=profiles.find(p=>p.id===source.id)||profiles.find(p=>p.name===source.name);
+      let choice='file';if(original&&profileShape(original)!==profileShape(source))choice=conflict('profile:'+original.id,source.name,'profile',original,source);
+      if(original&&choice==='local'){importedIds.set(source.id,original.id);continue;}
+      if(original&&profileShape(original)===profileShape(source)){importedIds.set(source.id,original.id);continue;}
+      const p=JSON.parse(JSON.stringify(source));
+      if(original&&choice!=='both'){p.id=original.id;p.name=uniqueName(p.name,original.id);profiles[profiles.indexOf(original)]=p;}
+      else{p.id=uniqueId(p.id);p.name=uniqueName(p.name);profiles.push(p);}
+      importedIds.set(source.id,p.id);
+    }
+    const nextSettings=filterState({schema:2,revision:local.revision+1,activeId:fresh?importedIds.get(incoming.settings.activeId):local.activeId,profiles});
+    if(fresh||JSON.stringify(local.profiles)!==JSON.stringify(nextSettings.profiles))patch['fq-keyword-filter-v1']=nextSettings;
+    const localInfinite=all['fq-infinite-enabled'];let infiniteChoice='file';
+    if(typeof localInfinite==='boolean'&&localInfinite!==incoming.infiniteEnabled)infiniteChoice=conflict('infinite','无限滚动开关','setting',localInfinite,incoming.infiniteEnabled);
+    if(infiniteChoice==='file'&&localInfinite!==incoming.infiniteEnabled)patch['fq-infinite-enabled']=incoming.infiniteEnabled;
+    for(const row of incoming.choices){
+      const key='fq-choice-'+row.id,old=all[key];let decision='file';
+      if(old&&(old.state!==row.state||(old.note||'')!==row.note))decision=conflict('choice:'+row.id,row.title,'choice',{state:old.state,note:old.note||''},{state:row.state,note:row.note});
+      if(decision==='local')continue;
+      const note=row.note;const next={...old,...row,note,noteRevision:old?.noteRevision||0};
+      if(!old||note!==(old.note||'')){next.noteRevision++;next.noteUpdatedAt=Date.now();}else next.noteUpdatedAt=old.noteUpdatedAt||0;
+      if(old){for(const field of ['cover','author','abstract','meta'])if(!next[field])next[field]=old[field]||'';next.updatedAt=old.state===row.state?old.updatedAt:Date.now();}
+      if(!old||['title','author','abstract','meta','cover','state','note'].some(f=>(old[f]||'')!==(next[f]||'')))patch[key]=next;
+    }
+    for(const row of incoming.history){
+      const key='fq-history-book-'+row.id,old=all[key];
+      const next=old?{...old,title:old.title||row.title,author:old.author||row.author,url:row.url,matches:[...new Set([...(old.matches||[]),...row.matches])],firstSeen:Math.min(old.firstSeen||row.firstSeen,row.firstSeen||old.firstSeen),lastSeen:Math.max(old.lastSeen||0,row.lastSeen),handledAt:Math.max(old.handledAt||0,row.handledAt)}:row;
+      if(JSON.stringify(old)!==JSON.stringify(next))patch[key]=next;
+    }
+    return {patch,conflicts,counts:{profiles:incoming.settings.profiles.length,choices:incoming.choices.length,history:incoming.history.length},changed:Object.keys(patch).length};
+  }
+  async function backupOperation(storage,message){
+    const all=await storage.all();
+    if(message.action==='backupExport')return backupFromStorage(all);
+    if(!storage.atomicBackup)throw Error('导入目前支持 Chrome／Edge 扩展版，请使用扩展安装包。');
+    const plan=backupPlan(all,message.pack,message.decisions||{});
+    if(plan.conflicts.length)return {needsChoice:true,conflicts:plan.conflicts,counts:plan.counts};
+    if(plan.changed)await storage.set(plan.patch);
+    return {ok:true,counts:plan.counts,changed:plan.changed,infiniteEnabled:plan.patch['fq-infinite-enabled']??(all['fq-infinite-enabled']!==false)};
+  }
+
   // HISTORY_CORE_END
 
   // OFFICIAL_CORE_BEGIN
@@ -210,7 +293,7 @@
       get: async key => GM_getValue(key, null),
       all: async () => {
         const keys = typeof GM_listValues === 'function' ? await GM_listValues() : [];
-        const entries = await Promise.all(keys.filter(k=>k.startsWith('fq-history-book-')||k.startsWith('fq-choice-')||k.startsWith('fq-official-sync-')).map(async k=>[k,await GM_getValue(k,null)]));
+        const entries = await Promise.all(keys.filter(k=>k==='fq-keyword-filter-v1'||k==='fq-infinite-enabled'||k.startsWith('fq-history-book-')||k.startsWith('fq-choice-')||k.startsWith('fq-official-sync-')).map(async k=>[k,await GM_getValue(k,null)]));
         return Object.fromEntries(entries);
       },
       set: async values => { for (const [key,value] of Object.entries(values)) await GM_setValue(key,value); }
@@ -310,7 +393,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.10.1</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.11.0</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -454,7 +537,7 @@
   $('words').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'&&!e.isComposing){e.preventDefault();addWordInput();}});
   $('word-add').onclick=()=>{addWordInput();$('words').focus({preventScroll:true});};
   function showHistory(show) {
-    historyView = show;
+    historyView = show;if($('backup-view'))$('backup-view').hidden=true;
     $('settings-view').hidden = show;
     $('history-view').hidden = !show;
     $('panel').dataset.view = show ? 'history' : 'settings';
@@ -1235,10 +1318,10 @@
     closeFilterTools();closeIntro(false);
     const opening=!drawerTab;
     if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
-    drawerTab=tab;drawer.dataset.review=String(tab==='later');drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
+    drawerTab=tab;drawer.dataset.review=String(tab==='later');drawer.hidden=false;host.hidden=false;host.style.display=['rules','history','backup'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
     drawer.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
     if(choiceListOpen){cq('filter').value=tab;renderChoices();if(tab==='later'&&(opening||!syncAccount))refreshOfficial();}
-    else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='rules'&&!drawerRulesLoaded){resetWordDraft();$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
+    else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='backup'){$('settings-view').hidden=true;$('backup-view').hidden=false;}if(tab==='rules'&&!drawerRulesLoaded){resetWordDraft();$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
     drawerBody.scrollTop=0;
     if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});
   }
@@ -1352,6 +1435,71 @@
     groupContext.hidden=profileDraft.groups.length===1&&currentGroup().enabled&&!organize.open;
     $('words').placeholder=profileDraft.groups.length>1?'添加到「'+currentGroup().name+'」，例如：原神，崩铁，鸣潮':'例如：原神，崩铁，鸣潮';
   }
+
+  const backupView=document.createElement('section');backupView.id='backup-view';backupView.hidden=true;
+  backupView.innerHTML='<div class="backup-heading"><h3>把选书配置带到另一台电脑</h3><p>Chrome 和 Edge 通用。导出后，在另一台电脑拖入这个文件即可。</p></div><div class="backup-actions"><button id="backup-export">一键导出</button><span id="backup-export-status" role="status"></span></div><input id="backup-file" type="file" accept=".json,application/json" hidden><button id="backup-drop" type="button"><strong>拖入配置包，即可导入</strong><span>也可以点击选择 .json 文件</span></button><p class="backup-caption">已有数据自动合并，有冲突时再选择。不包含登录信息，也不会自动修改官方书架。</p><p id="backup-status" role="status"></p><section id="backup-conflicts" hidden><h4>这些内容不一致，请选择保留哪一份</h4><div class="backup-actions"><button id="backup-all-local">全部保留本机</button><button id="backup-all-file">全部采用备份</button></div><div id="backup-conflict-list" data-review-scroll></div><div class="backup-actions"><button id="backup-confirm">确认并导入</button><button id="backup-cancel">取消</button></div></section><button id="backup-retry" hidden>重试导入</button>';
+  $('panel').append(backupView);
+  const backupStyle=document.createElement('style');backupStyle.textContent='#backup-view{max-width:860px;margin:0 auto;padding:12px 0}#backup-view h3{font-size:21px;color:#332a24;margin:0 0 8px}#backup-view p{font-size:13px;color:#88786c}.backup-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0}#backup-export,#backup-confirm{background:#ff651d;color:white;border-color:#ff651d}#backup-drop{width:100%;min-height:160px;border:1px dashed #d5b59d;background:#fffcf9;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border-radius:10px}#backup-drop strong{font-size:18px;color:#65422b}#backup-drop span{font-size:13px;color:#978070}#backup-drop[data-over=true]{background:#fff1e5;border-color:#f76a24}#backup-status{color:#a34e25!important;white-space:pre-wrap}#backup-conflict-list{max-height:280px;overflow:auto;overscroll-behavior:contain}.backup-conflict-row{padding:12px 0;border-top:1px solid #eee1d6;display:grid;grid-template-columns:1fr auto;gap:6px 14px}.backup-conflict-row strong{overflow-wrap:anywhere}.backup-conflict-row p{grid-column:1/-1;white-space:pre-wrap;overflow-wrap:anywhere;margin:0!important}.backup-conflict-row select{font:inherit;padding:5px;border:1px solid #d9c5b5;border-radius:6px;background:white;max-width:150px}.backup-caption{margin:12px 0!important}#backup-entry{grid-column:1/-1;width:100%;font-size:13px}#backup-entry[data-new=true]{color:#c1551a;background:#fff5eb;border-color:#f3c5a7}#backup-onboarding{margin:0 0 14px;border:1px solid #efdbc9;border-radius:8px;padding:9px 12px;background:#fffaf5;font-size:13px;color:#926846;display:flex;align-items:center;justify-content:space-between;gap:12px}#backup-onboarding button{padding:4px 10px;font-size:13px}@media(max-width:600px){.backup-conflict-row{grid-template-columns:1fr}.backup-conflict-row p{grid-column:1}}';shadow.append(backupStyle);
+  const backupEntryStyle=document.createElement('style');backupEntryStyle.textContent='#backup-entry{grid-column:1/-1;width:100%;font-size:13px}#backup-entry[data-new=true]{color:#c1551a;background:#fff5eb;border-color:#f3c5a7}';bs.append(backupEntryStyle);
+  const backupEntry=document.createElement('button');backupEntry.id='backup-entry';backupEntry.textContent='备份与迁移';bq('bar').append(backupEntry);backupEntry.onclick=()=>openDrawer('backup');
+  const backupTab=document.createElement('button');backupTab.textContent='备份与迁移';backupTab.dataset.tab='backup';backupTab.setAttribute('role','tab');backupTab.onclick=()=>openDrawer('backup');drawer.querySelector('#fq-drawer-tabs').append(backupTab);
+  if(!GM_getValue(STORE,null)){const onboarding=document.createElement('div');onboarding.id='backup-onboarding';onboarding.append(document.createTextNode('已有其他电脑的配置？'));const button=document.createElement('button');button.textContent='导入已有配置';button.onclick=()=>openDrawer('backup');onboarding.append(button);$('settings-view').prepend(onboarding);backupEntry.dataset.new='true';backupEntry.textContent='导入已有配置 · 备份与迁移';}
+  let backupPack=null,backupDecisions={},backupBusy=false,backupGeneration=0;
+  const backupControls=['backup-drop','backup-file','backup-confirm','backup-cancel','backup-retry','backup-all-local','backup-all-file'];
+  function backupSetBusy(busy){backupBusy=busy;for(const id of backupControls)$(id).disabled=busy;}
+  const summarizeConflict=(value,kind)=>{
+    if(kind==='setting')return value?'开启':'关闭';
+    if(kind==='choice')return ({later:'候选',skip:'不想看',none:'未标记'}[value.state]||'未知')+'；备注：'+(value.note?value.note.slice(0,120)+(value.note.length>120?'…':''):'无');
+    return value.name+' · '+value.groups.length+' 组 · '+value.groups.reduce((n,g)=>n+g.words.length,0)+' 词 · '+(value.enabled?'过滤开启':'过滤关闭')+' · '+(value.abstract?'匹配简介':'只匹配书名')+'\n'+value.groups.map(g=>g.name+(g.enabled?'':'（停用）')+'：'+g.words.join('、')).join('；').slice(0,220);
+  };
+  function renderBackupConflicts(rows){
+    $('backup-conflicts').hidden=false;const fragment=document.createDocumentFragment();
+    for(const item of rows){const row=document.createElement('div');row.className='backup-conflict-row';const title=document.createElement('strong');title.textContent=item.label;
+      const select=document.createElement('select');select.setAttribute('aria-label','选择 '+item.label+' 的导入方式');
+      for(const [value,label]of [['local','保留本机'],['file','采用备份'],...(item.kind==='profile'?[['both','两份都保留']]:[])]){const option=document.createElement('option');option.value=value;option.textContent=label;select.append(option);}
+      backupDecisions[item.key]={signature:item.signature,choice:'local'};select.onchange=()=>{backupDecisions[item.key]={signature:item.signature,choice:select.value};};
+      const description=document.createElement('p');description.textContent='本机：'+summarizeConflict(item.before,item.kind)+'\n备份：'+summarizeConflict(item.after,item.kind);row.append(title,select,description);fragment.append(row);
+    }$('backup-conflict-list').replaceChildren(fragment);
+  }
+  async function importBackup(){
+    if(!backupPack||backupBusy)return;
+    backupSetBusy(true);$('backup-retry').hidden=true;$('backup-status').textContent='正在校验并合并…';
+    try{
+      const result=await historyCall({action:'backupImport',pack:backupPack,decisions:backupDecisions});
+      if(result.needsChoice){renderBackupConflicts(result.conflicts);$('backup-status').textContent='发现 '+result.conflicts.length+' 项冲突，尚未写入任何数据。';return;}
+      $('backup-conflicts').hidden=true;await refreshProfiles();await refreshChoices();if(historyView)await refreshHistory();
+      applyInfinitePreference(result.infiniteEnabled);
+      $('backup-status').textContent=(result.changed?'导入完成':Object.keys(backupDecisions).length?'合并完成，已保留所选内容':'配置已存在，无需重复导入')+'：'+result.counts.profiles+' 套方案、'+result.counts.choices+' 条个人标记、'+result.counts.history+' 条屏蔽记录。';
+      $('backup-onboarding')?.remove();backupEntry.textContent='备份与迁移';delete backupEntry.dataset.new;backupPack=null;backupDecisions={};
+    }catch(error){$('backup-status').textContent='未能完成导入：'+error.message+' 可重试，重复记录会自动去重。';$('backup-retry').hidden=false;}
+    finally{backupSetBusy(false);}
+  }
+  async function readBackupFile(file){
+    if(backupBusy)return;const generation=++backupGeneration;backupPack=null;backupDecisions={};$('backup-conflicts').hidden=true;$('backup-retry').hidden=true;
+    try{
+      if(!file||file.size>BACKUP_LIMIT)throw Error('请选择不超过 10 MB 的配置包。');
+      const text=await file.text();if(generation!==backupGeneration)return;
+      let parsed;try{parsed=JSON.parse(text.replace(/^\uFEFF/,''));}catch{throw Error('文件不是有效的 JSON 配置包。');}
+      backupPack=backupClean(parsed);await importBackup();
+    }catch(error){if(generation===backupGeneration)$('backup-status').textContent='无法导入：'+error.message;}
+  }
+  $('backup-drop').onclick=()=>$('backup-file').click();
+  $('backup-file').onchange=()=>{const file=$('backup-file').files[0];$('backup-file').value='';if(file)readBackupFile(file);};
+  $('backup-drop').ondragover=e=>{e.preventDefault();if(!backupBusy)$('backup-drop').dataset.over='true';};
+  $('backup-drop').ondragleave=()=>{delete $('backup-drop').dataset.over;};
+  $('backup-drop').ondrop=e=>{e.preventDefault();e.stopPropagation();delete $('backup-drop').dataset.over;if(backupBusy)return;const files=e.dataTransfer?.files;if(files?.length!==1){$('backup-status').textContent='请一次拖入一个配置包。';return;}readBackupFile(files[0]);};
+  for(const type of ['dragover','drop'])document.addEventListener(type,e=>{if(drawerTab==='backup'&&Array.from(e.dataTransfer?.types||[]).includes('Files'))e.preventDefault();});
+  $('backup-confirm').onclick=importBackup;$('backup-retry').onclick=importBackup;
+  $('backup-cancel').onclick=()=>{backupGeneration++;backupPack=null;backupDecisions={};$('backup-conflicts').hidden=true;$('backup-status').textContent='已取消，原有数据未改动。';};
+  for(const [id,value]of [['backup-all-local','local'],['backup-all-file','file']])$(id).onclick=()=>{for(const select of $('backup-conflict-list').querySelectorAll('select')){select.value=value;select.onchange();}};
+  $('backup-export').onclick=async()=>{
+    $('backup-export').disabled=true;$('backup-export-status').textContent='正在打包…';
+    try{const pack=await historyCall({action:'backupExport'}),blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json;charset=utf-8'});if(blob.size>BACKUP_LIMIT)throw Error('配置包超过 10 MB，请先减少记录数量。');
+      const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='番茄选书配置-'+new Date().toISOString().slice(0,10)+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);$('backup-export-status').textContent='配置包已生成，请保留下载的文件。';
+    }catch(error){$('backup-export-status').textContent='导出失败：'+error.message;}finally{$('backup-export').disabled=false;}
+  };
+  function applyInfinitePreference(value){if(typeof value!=='boolean'||value===infiniteEnabled)return;infiniteEnabled=value;toggle.checked=value;disposeStream();syncStream();scan();}
+  if(typeof FQ_PREF_WATCH==='function')FQ_PREF_WATCH(applyInfinitePreference);
 
   drawerReady=true;mountFilterBar();setInterval(mountFilterBar,700);
 
