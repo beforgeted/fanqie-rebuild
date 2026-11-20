@@ -11,11 +11,25 @@
     }
     const choicePrefix='fq-choice-';
     if(message.action==='choices') return Object.entries(await storage.all()).filter(([k,v])=>k.startsWith(choicePrefix)&&v&&/^\d{5,25}$/.test(v.id)).map(([,v])=>v);
+    if(message.action==='choiceMeta'||message.action==='note') {
+      if(!/^\d{5,25}$/.test(message.id||''))throw Error('无效书籍');
+      const key=choicePrefix+message.id,previous=await storage.get(key);
+      if(!previous)throw Error('候选记录已不存在');let row;
+      if(message.action==='note'){
+        if((previous.noteRevision||0)!==message.revision)return {conflict:true,row:previous};
+        row={...previous,note:String(message.note||'').slice(0,2000),noteRevision:(previous.noteRevision||0)+1,noteUpdatedAt:Date.now()};
+      }else{
+        const b=message.book||{};row={...previous};
+        for(const [field,max] of [['title',500],['author',200],['abstract',12000],['meta',500]])if(typeof b[field]==='string'&&b[field].trim())row[field]=b[field].slice(0,max);
+        if(typeof b.cover==='string'&&/^https:\/\//.test(b.cover))row.cover=b.cover.slice(0,3000);
+      }
+      await storage.set({[key]:row});return {row};
+    }
     if(message.action==='choose') {
       const b=message.book;
       if(!b||!/^\d{5,25}$/.test(b.id)||!['none','later','skip'].includes(message.state))throw Error('无效标记');
       const previous=await storage.get(choicePrefix+b.id)||{};
-      const row={id:b.id,title:String(b.title||previous.title||b.id).slice(0,500),author:String(b.author||previous.author||'').slice(0,200),abstract:String(b.abstract||previous.abstract||'').slice(0,12000),state:message.state,updatedAt:Date.now()};
+      const row={...previous,id:b.id,cover:typeof b.cover==='string'&&/^https:\/\//.test(b.cover)?b.cover.slice(0,3000):previous.cover||'',meta:String(b.meta||previous.meta||'').slice(0,500),title:String(b.title||previous.title||b.id).slice(0,500),author:String(b.author||previous.author||'').slice(0,200),abstract:String(b.abstract||previous.abstract||'').slice(0,12000),state:message.state,updatedAt:Date.now()};
       await storage.set({[choicePrefix+b.id]:row});return row;
     }
     const prefix = 'fq-history-book-';

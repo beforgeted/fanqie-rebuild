@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.8.2
+// @version      1.9.0
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -48,11 +48,25 @@
     }
     const choicePrefix='fq-choice-';
     if(message.action==='choices') return Object.entries(await storage.all()).filter(([k,v])=>k.startsWith(choicePrefix)&&v&&/^\d{5,25}$/.test(v.id)).map(([,v])=>v);
+    if(message.action==='choiceMeta'||message.action==='note') {
+      if(!/^\d{5,25}$/.test(message.id||''))throw Error('无效书籍');
+      const key=choicePrefix+message.id,previous=await storage.get(key);
+      if(!previous)throw Error('候选记录已不存在');let row;
+      if(message.action==='note'){
+        if((previous.noteRevision||0)!==message.revision)return {conflict:true,row:previous};
+        row={...previous,note:String(message.note||'').slice(0,2000),noteRevision:(previous.noteRevision||0)+1,noteUpdatedAt:Date.now()};
+      }else{
+        const b=message.book||{};row={...previous};
+        for(const [field,max] of [['title',500],['author',200],['abstract',12000],['meta',500]])if(typeof b[field]==='string'&&b[field].trim())row[field]=b[field].slice(0,max);
+        if(typeof b.cover==='string'&&/^https:\/\//.test(b.cover))row.cover=b.cover.slice(0,3000);
+      }
+      await storage.set({[key]:row});return {row};
+    }
     if(message.action==='choose') {
       const b=message.book;
       if(!b||!/^\d{5,25}$/.test(b.id)||!['none','later','skip'].includes(message.state))throw Error('无效标记');
       const previous=await storage.get(choicePrefix+b.id)||{};
-      const row={id:b.id,title:String(b.title||previous.title||b.id).slice(0,500),author:String(b.author||previous.author||'').slice(0,200),abstract:String(b.abstract||previous.abstract||'').slice(0,12000),state:message.state,updatedAt:Date.now()};
+      const row={...previous,id:b.id,cover:typeof b.cover==='string'&&/^https:\/\//.test(b.cover)?b.cover.slice(0,3000):previous.cover||'',meta:String(b.meta||previous.meta||'').slice(0,500),title:String(b.title||previous.title||b.id).slice(0,500),author:String(b.author||previous.author||'').slice(0,200),abstract:String(b.abstract||previous.abstract||'').slice(0,12000),state:message.state,updatedAt:Date.now()};
       await storage.set({[choicePrefix+b.id]:row});return row;
     }
     const prefix = 'fq-history-book-';
@@ -261,7 +275,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.8.2</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.9.0</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -492,7 +506,7 @@
   const official=createOfficialShelfClient({fetchImpl:(...args)=>fetch(...args),csrf:()=>document.cookie.split(';').map(s=>s.trim()).find(s=>s.startsWith('passport_csrf_token='))?.split('=').slice(1).join('=')||''});
   let syncAccount='',syncRows=new Map(),officialRows=null,syncBusy=false,syncLoading=false,syncGeneration=0;
   const selectedCandidates=new Set();
-  const candidateRows=()=>[...choices.values()].filter(r=>r.state==='later'&&(!cq('query').value.trim()||(r.title+' '+r.author).toLowerCase().includes(cq('query').value.trim().toLowerCase())));
+  const candidateRows=()=>[...choices.values()].filter(r=>r.state==='later'&&(!cq('query').value.trim()||(r.title+' '+r.author).toLowerCase().includes(cq('query').value.trim().toLowerCase()))&&reviewMatches(r));
   function syncStatus(id){
     const known=syncRows.get(id),remote=officialRows?.find(r=>String(r.book_id)===id);
     if(official.inTarget(remote))return {status:'success',label:'已同步到官方待看'};
@@ -519,7 +533,7 @@
     cq('sync-retry').disabled=syncBusy||syncLoading||!candidateRows().some(r=>syncStatus(r.id).status==='failed');
   }
   function addSyncControls(row,el){
-    const current=syncStatus(row.id),check=document.createElement('input');check.type='checkbox';check.className='candidate-check';check.checked=selectedCandidates.has(row.id);check.disabled=syncBusy||syncLoading||current.status==='success';check.setAttribute('aria-label','选择候选：'+row.title);check.onchange=()=>{check.checked?selectedCandidates.add(row.id):selectedCandidates.delete(row.id);renderSyncTools();};el.prepend(check);
+    const current=syncStatus(row.id),check=document.createElement('input');check.type='checkbox';check.className='candidate-check';check.checked=selectedCandidates.has(row.id);check.disabled=syncBusy||syncLoading||current.status==='success';check.setAttribute('aria-label','选择候选：'+row.title);check.onchange=()=>{check.checked?selectedCandidates.add(row.id):selectedCandidates.delete(row.id);renderChoices();};el.prepend(check);
     const line=document.createElement('div');line.className='sync-state';line.dataset.status=current.status;line.textContent=current.label;el.append(line);
     const action=document.createElement('button');action.className='sync-one';action.textContent=current.status==='success'?'已同步':current.status==='failed'?'重试加入官方待看':'加入官方待看';action.disabled=syncBusy||syncLoading||current.status==='success';action.onclick=()=>prepareSync([row.id]);el.append(action);
   }
@@ -576,6 +590,7 @@
   async function choose(book,state,{quiet=false}={}) {
     if(choiceBusy)return false;choiceBusy=true;
     const prior=choices.get(book.id)?.state||'none';
+    if(!book.cover){const source=[...document.querySelectorAll(CARD)].find(c=>c.querySelector('a[href*="/page/"]')?.getAttribute('href')?.match(/\/page\/(\d+)/)?.[1]===book.id);book={...book,cover:safeCover(source?.querySelector('img')?.getAttribute('src')||document.querySelector('.page-header .book-cover-img')?.getAttribute('src'))};}
     try {
       const row=await historyCall({action:'choose',book,state});choices.set(book.id,row);
       suppressAutoUntil=Date.now()+1500;scan();renderChoices();
@@ -604,7 +619,12 @@
       const state=choices.get(detail.id)?.state||'none';
       detailActions.querySelectorAll('button').forEach(b=>{b.className='byte-btn byte-btn-default byte-btn-size-large byte-btn-shape-square muye-button';b.style.cssText='position:static;padding:0 14px;min-width:70px;width:auto!important;margin:0;height:32px;cursor:pointer;background:#f6f6f6;color:#333;border:1px solid #dedede';b.setAttribute('aria-pressed',String(b.dataset.choice===state));if(b.dataset.choice===state&&state!=='none'){b.textContent=state==='later'?'已加入候选':'已设为不想看';b.style.color='#fa6725';b.style.borderColor='#fa6725';}if(b.dataset.choice==='none'){b.hidden=state==='none';if(b.hidden)b.style.display='none';}});
     }else{detailActions.remove();detailFeedback.remove();}
-    const mode=cq('filter').value,q=cq('query').value.trim().toLowerCase();const fragment=document.createDocumentFragment();
+    const mode=cq('filter').value,q=cq('query').value.trim().toLowerCase();
+    choiceHost.dataset.review=String(mode==='later');
+    cq('review-filter').hidden=mode!=='later';cq('review-reader').hidden=mode!=='later';
+    if(mode==='later'){renderCandidateReview();renderSyncTools();return;}
+    reviewListMode=false;
+    const fragment=document.createDocumentFragment();
     for(const row of [...choices.values()].filter(r=>r.state===mode&&(!q||(r.title+' '+r.author).toLowerCase().includes(q))).sort((a,b)=>b.updatedAt-a.updatedAt)){
       const el=document.createElement('div'),a=document.createElement('a');a.href='/page/'+row.id;a.target='_blank';a.rel='noopener noreferrer';a.textContent=row.title;el.append(a);
       const meta=document.createElement('div');const matched=config.words.filter(w=>normalize(w)&&[row.title,config.abstract?row.abstract||'':''].some(t=>normalize(t).includes(normalize(w))));meta.textContent=(row.author||'')+(matched.length?' · 命中关键词：'+matched.join('、'):'');el.append(meta);choiceButtons(row,el);if(mode==='later')addSyncControls(row,el);fragment.append(el);
@@ -612,6 +632,146 @@
   }
   cq('open').onclick=()=>{choiceListOpen=true;renderChoices();};cq('close').onclick=()=>{if(drawerReady)closeDrawer();else{choiceListOpen=false;renderChoices();}};
   cq('filter').onchange=renderChoices;cq('query').oninput=renderChoices;
+  // Candidate review keeps rows and the reader mounted during status/metadata updates.
+  let reviewActive='',reviewListMode=false,reviewPreviousIds=[];
+  const reviewNodes=new Map(),reviewData=new Map(),reviewLoadState=new Map(),reviewFetches=new Map(),noteDrafts=new Map(),noteSaving=new Set();
+  const reviewQueue=new Set(),reviewHydrationTried=new Set();let reviewHydrating=0;
+  const reviewSearch=document.createElement('div');reviewSearch.id='review-search';cq('query').before(reviewSearch);reviewSearch.append(cq('query'));
+  const reviewFilter=document.createElement('div');reviewFilter.id='review-filter';
+  reviewFilter.innerHTML='<label>同步状态 <select id="review-status"><option value="all">全部候选</option><option value="pending">未同步</option><option value="success">已同步</option><option value="failed">同步失败</option></select></label><span id="review-count"></span>';
+  reviewSearch.append(reviewFilter);
+  const reviewLayout=document.createElement('div');reviewLayout.id='review-layout';
+  cq('rows').before(reviewLayout);reviewLayout.append(cq('rows'));cq('rows').setAttribute('data-review-scroll','');
+  cq('rows').setAttribute('aria-label','候选书籍列表');
+  const reader=document.createElement('section');reader.id='review-reader';reader.setAttribute('aria-label','候选简介阅读区');
+  reader.innerHTML='<div id="review-empty">从左侧选择一本候选，查看完整简介</div><div id="review-content" hidden><header><div id="review-book-head"><div class="review-cover reader-cover"><span class="cover-placeholder">暂无封面</span><img id="review-cover" alt="" hidden><span id="review-badge" class="review-badge"></span></div><div><span class="review-eyebrow">候选复筛</span><h2 id="review-title"></h2><p id="review-author"></p><p id="review-meta"></p></div></div><div class="review-statusline"><span id="review-load" role="status"></span><button id="review-reload">重试读取</button></div></header><div id="review-text" data-review-scroll tabindex="0" aria-label="完整简介"></div><div id="review-note"><button id="note-toggle" aria-expanded="false">＋ 留下一句备注（可选）</button><div id="note-editor" hidden><textarea id="note-input" maxlength="2000" placeholder="为什么留下它？例如：设定感兴趣，想先试几章。" aria-label="候选备注"></textarea><div class="note-toolbar"><span id="note-message" role="status"></span><button id="note-latest" hidden>载入另一页的备注</button><button id="note-save">保存备注</button></div></div></div><footer><button id="review-sync" class="primary">加入官方待看</button><button id="review-skip">不想看</button><button id="review-remove">移出候选</button><a id="review-detail" target="_blank" rel="noopener noreferrer">查看详情 ↗</a></footer></div>';
+  reviewLayout.append(reader);for(const id of ['note-input','review-title','review-meta','review-book-head'])cq(id).setAttribute('data-review-scroll','');
+  const reviewStyle=document.createElement('style');
+  reviewStyle.textContent=[
+    ':host([data-review=true]) #review-search{display:flex;align-items:center;gap:14px;flex-shrink:0;margin-bottom:8px}:host([data-review=true]) #review-filter{margin:0;flex-shrink:0}#review-count{white-space:nowrap}#review-filter label{white-space:nowrap}:host([data-review=true]) .sync-toolbar button{font-size:12px;padding:5px 8px;margin:0}',
+    ':host([data-review=true]) #box{height:100%;display:flex;flex-direction:column;padding:6px 0 0!important;min-height:0}',
+    ':host([data-review=true]) #query{margin:0!important;flex:1;min-width:120px;width:auto}',
+    '#review-filter{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:#887b71;margin-bottom:6px}#review-filter select{padding:5px 10px;border:1px solid #e8ded7;border-radius:6px;background:#fff;color:#51463f}',
+    ':host([data-review=true]) #official-tools{flex-shrink:0;padding-bottom:8px}:host([data-review=true]) #official-tools>p:first-child{display:none}',
+    ':host([data-review=true]) #sync-message{height:20px;margin:4px 0 0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    ':host([data-review=true]) #msg{height:24px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#msg:empty{visibility:hidden}',
+    ':host([data-review=true]) #review-layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,42%) minmax(0,1fr);border-top:1px solid #eee8e3}',
+    ':host([data-review=true]) #rows{overflow:auto;overscroll-behavior:contain;overflow-anchor:none;scrollbar-gutter:stable;min-height:0;padding-right:12px}',
+    ':host([data-review=true]) #rows>.review-row{display:grid;grid-template-columns:20px 76px minmax(0,1fr);grid-template-rows:1fr auto;gap:6px 10px;padding:14px 8px!important;min-height:140px;border-bottom:1px solid #eee8e3;border-left:3px solid transparent;background:white}',
+    ':host([data-review=true]) #rows>.review-row[data-active=true]{background:#fff7f0;border-left-color:#ed6b32}:host([data-review=true]) #rows>.review-row:hover{background:#fffbf7}',
+    '.review-row>.candidate-check{grid-column:1;grid-row:1;align-self:start;margin:5px 0;width:15px;height:15px}',
+    '.review-cover{position:relative;display:block;width:76px;height:104px;overflow:hidden;flex-shrink:0;background:linear-gradient(145deg,#f0e4d7,#e0d2c5);border:1px solid #e8dfd8;border-radius:6px;padding:0!important;margin:0!important;box-shadow:0 3px 8px #3925140d}',
+    '.review-row>.review-cover{grid-column:2;grid-row:1/3}.review-cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.cover-placeholder{height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;color:#8a7767}',
+    '.review-badge{position:absolute;right:3px;top:4px;max-width:calc(100% - 6px);border:1px solid #ffffffb3;border-radius:5px;padding:2px 5px;line-height:1.5;font-size:10px;font-weight:600;color:#514a42;background:#ffffffe6;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 1px 5px #0002;white-space:nowrap}',
+    '.review-badge[data-status=success]{color:#21573e;background:#e5f7ede6}.review-badge[data-status=failed]{color:#a23e29;background:#fff0e8ed}.review-badge[data-status=syncing],.review-badge[data-status=queued]{color:#a3571f;background:#fff2dce6}',
+    '.review-row-main{grid-column:3;min-width:0}.review-open{display:block;text-align:left;border:0;background:transparent!important;margin:0!important;padding:0!important;color:#302721;font-size:14px;line-height:1.6;font-weight:600;max-width:100%;overflow-wrap:anywhere}',
+    '.review-row-author,.review-row-meta{font-size:12px;color:#8b8077;line-height:1.6;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.review-row-meta{color:#a0958c}.review-row-snippet{font-size:12px;color:#71675f;margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.6}.review-row-note{min-height:18px;font-size:11px;color:#ad6d43;margin-top:4px}',
+    '.review-row>.sync-one{grid-column:3;justify-self:start;font-size:11px;margin:0;padding:3px 7px;background:#fff;border-color:#ead8cb}.review-row>.sync-state{display:none}',
+    '#review-reader{min-width:0;min-height:0;border-left:1px solid #eee8e3;padding-left:20px;overflow:hidden}#review-empty{display:grid;height:100%;place-content:center;text-align:center;color:#9b8d82;padding:20px}',
+    '#review-content{height:100%;display:flex;flex-direction:column;min-height:0}#review-content>header{padding:14px 0 9px;flex-shrink:0}#review-book-head{display:flex;gap:16px;align-items:center;min-width:0}#review-book-head>div:last-child{min-width:0}',
+    '.reader-cover{width:84px;height:114px}.review-eyebrow{font-size:10px;color:#b07955;letter-spacing:2px}#review-title{display:block!important;font-size:18px;line-height:1.5;color:#33291f;margin:5px 0;max-height:54px;overflow:auto;overscroll-behavior:contain}#review-author,#review-meta{font-size:12px;color:#897b70;margin:3px 0}#review-meta{max-height:38px;overflow:auto;overscroll-behavior:contain}',
+    '.review-statusline{display:flex;align-items:center;justify-content:space-between;height:26px;font-size:11px;color:#a29285}#review-reload{border:0;font-size:11px;padding:0 3px;background:transparent;color:#ba653b}',
+    '#review-text{flex:1;min-height:30px;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.95;font-size:14px;color:#4b4037;padding:12px 12px 12px 0;scrollbar-gutter:stable;border-top:1px solid #f1e9e2}',
+    '#review-content footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex-shrink:0;padding:10px 0 0;border-top:1px solid #eee8e3}#review-content footer button{margin:0;font-size:12px;padding:7px 10px}#review-content .primary{background:#f36b2a;color:white;border-color:#f36b2a}#review-content footer a{font-size:11px;margin-left:auto;color:#a75b32;text-decoration:none}',
+    '#review-note{flex-shrink:0;padding:8px 0;position:relative}#note-toggle{border:0;background:transparent;padding:0;margin:0;font-size:12px;color:#a57857}#note-input{width:100%;height:62px;resize:none;border:1px solid #e6d9cc;border-radius:6px;padding:8px;font:12px/1.6 inherit;background:#fffcf8;color:#594638;overscroll-behavior:contain}#note-editor{position:absolute;left:0;right:0;bottom:100%;padding:12px;background:#fffcf8;border:1px solid #e6d9cc;border-radius:8px;box-shadow:0 -4px 20px #35241414;z-index:2}.note-toolbar{display:flex;align-items:center;gap:6px;min-height:28px}#note-message{font-size:11px;color:#a57857;flex:1}#note-save,#note-latest{font-size:11px;padding:3px 7px;margin:0}',
+    '#official-tools{position:relative}#sync-review{position:absolute;left:0;right:0;top:100%;z-index:4;max-height:190px;box-shadow:0 8px 24px #0002;overflow:auto;overscroll-behavior:contain}#sync-review ul{max-height:70px}button:focus-visible,a:focus-visible,textarea:focus-visible{outline:2px solid #ed884f;outline-offset:2px}',
+    '@media(max-width:760px){:host([data-review=true]) #review-search{gap:6px}#review-count{display:none}:host([data-review=true]) #review-layout{grid-template-columns:minmax(160px,36%) minmax(0,1fr)}:host([data-review=true]) #rows>.review-row{grid-template-columns:17px minmax(0,1fr);gap:6px}.review-row>.review-cover{grid-column:2;grid-row:1}.review-row-main,.review-row>.sync-one{grid-column:2}.review-row>.candidate-check{grid-column:1}.review-row-snippet,.review-row-meta{display:none}#review-reader{padding-left:12px}.reader-cover{width:60px;height:82px}#review-title{font-size:15px}}',
+    '@media(max-height:760px){#review-book-head{max-height:74px;overflow:auto;overscroll-behavior:contain}.review-eyebrow{display:none}.review-statusline{height:20px}#review-meta{max-height:19px}.reader-cover{width:44px;height:60px}#review-content>header{padding-top:8px}#review-title{font-size:16px;max-height:48px}#note-input{height:48px}#review-content footer{padding-top:6px}#review-content footer button{padding:5px 7px}}'
+  ].join('\n');cs.append(reviewStyle);
+  cq('sync-review').setAttribute('data-review-scroll','');
+  function reviewMatches(row){const filter=cq('review-status')?.value||'all',status=syncStatus(row.id).status;return filter==='all'||(filter==='pending'?status!=='success':status===filter);}
+  cq('review-status').onchange=()=>{selectedCandidates.clear();renderChoices();};
+  function reviewSet(el,text){if(el.textContent!==text)el.textContent=text;}
+  function paintCover(img,url){const next=safeCover(url);if(img.dataset.source===next)return;img.dataset.source=next;img.hidden=!next;if(next){img.loading='lazy';img.referrerPolicy='no-referrer';img.onload=()=>{img.hidden=false;};img.onerror=()=>{img.hidden=true;};img.src=next;}else img.removeAttribute('src');}
+  function paintBadge(el,status){el.dataset.status=status.status;reviewSet(el,({success:'已同步',failed:'同步失败',queued:'等待同步',syncing:'同步中',pending:'未同步'})[status.status]||'未同步');el.title=status.label;}
+  function makeReviewRow(row){
+    const el=document.createElement('div');el.className='review-row';el.dataset.id=row.id;
+    el.innerHTML='<button class="review-cover"><span class="cover-placeholder">暂无封面</span><img alt="" hidden><span class="review-badge"></span></button><div class="review-row-main"><button class="review-open"></button><div class="review-row-author"></div><div class="review-row-meta"></div><div class="review-row-snippet"></div><div class="review-row-note"></div></div>';
+    addSyncControls(row,el);
+    for(const b of el.querySelectorAll('.review-cover,.review-open'))b.onclick=()=>selectReview(row.id);
+    el.onclick=e=>{if(!e.target.closest('button,input,a')&&!window.getSelection()?.toString())selectReview(row.id);};
+    reviewNodes.set(row.id,el);return el;
+  }
+  function renderCandidateReview(){
+    const rows=candidateRows().sort((a,b)=>b.updatedAt-a.updatedAt||a.id.localeCompare(b.id)),ids=rows.map(r=>r.id),list=cq('rows'),top=list.scrollTop;
+    if(!reviewListMode){list.replaceChildren();reviewListMode=true;}
+    const visibleAnchor=[...list.children].find(el=>!el.hidden&&el.getBoundingClientRect().bottom>list.getBoundingClientRect().top);
+    const anchor=visibleAnchor?{el:visibleAnchor,top:visibleAnchor.getBoundingClientRect().top}:null;
+    for(const el of [...list.children])if(!ids.includes(el.dataset.id))el.remove();
+    for(const [index,row] of rows.entries()){
+      const el=reviewNodes.get(row.id)||makeReviewRow(row),status=syncStatus(row.id);
+      if(list.children[index]!==el)list.insertBefore(el,list.children[index]||null);
+      const title=el.querySelector('.review-open');reviewSet(title,row.title);el.querySelector('.review-cover').setAttribute('aria-label','查看简介：'+row.title);
+      reviewSet(el.querySelector('.review-row-author'),row.author||'作者信息待补充');
+      reviewSet(el.querySelector('.review-row-meta'),row.meta||'字数与状态待补充');
+      reviewSet(el.querySelector('.review-row-snippet'),row.abstract||'点击查看完整简介');
+      reviewSet(el.querySelector('.review-row-note'),noteDrafts.get(row.id)?.dirty?'有未保存的备注':row.note?'有备注':'');
+      paintCover(el.querySelector('img'),row.cover);paintBadge(el.querySelector('.review-badge'),status);
+      const check=el.querySelector('.candidate-check');check.checked=selectedCandidates.has(row.id);check.disabled=syncBusy||syncLoading||status.status==='success';
+      const action=el.querySelector('.sync-one');action.style.visibility=status.status==='success'?'hidden':'';action.disabled=syncBusy||syncLoading||status.status==='success';reviewSet(action,status.status==='success'?'已同步':status.status==='failed'?'重试同步':'加入官方待看');
+      const line=el.querySelector('.sync-state');line.dataset.status=status.status;reviewSet(line,status.label);
+      if(choiceListOpen&&drawerTab==='later'&&!safeCover(row.cover)&&!reviewHydrationTried.has(row.id)){if(reviewCoverObserver)reviewCoverObserver.observe(el);else if(index<6){reviewQueue.add(row.id);}}
+    }
+    list.scrollTop=top;if(anchor?.el.isConnected)list.scrollTop+=anchor.el.getBoundingClientRect().top-anchor.top;
+    reviewSet(cq('review-count'),'当前 '+rows.length+' 本 · 已勾选 '+selectedCandidates.size+' 本');
+    const oldIndex=Math.max(0,reviewPreviousIds.indexOf(reviewActive));
+    if(!ids.includes(reviewActive))reviewActive=ids[Math.min(oldIndex,ids.length-1)]||'';
+    reviewPreviousIds=ids;reviewSet(cq('review-empty'),rows.length?'从左侧选择一本候选，查看完整简介':'当前条件下没有候选。可切换筛选，或回书库继续选书。');renderReviewReader();
+    for(const [id,el] of reviewNodes){el.dataset.active=String(id===reviewActive);el.querySelector('.review-open').setAttribute('aria-pressed',String(id===reviewActive));}
+    if(choiceListOpen&&drawerTab==='later'){if(reviewActive&&!reviewLoadState.has(reviewActive))loadReviewBook(reviewActive);drainReviewCovers();}
+  }
+  const reviewCoverObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){reviewQueue.add(e.target.dataset.id);reviewCoverObserver.unobserve(e.target);}drainReviewCovers();},{root:cq('rows'),rootMargin:'100px'}):null;
+  function drainReviewCovers(){
+    if(!choiceListOpen||drawerTab!=='later')return;
+    while(reviewHydrating<2&&reviewQueue.size){const id=reviewQueue.values().next().value;reviewQueue.delete(id);if(reviewHydrationTried.has(id)||!choices.get(id)||safeCover(choices.get(id).cover))continue;reviewHydrationTried.add(id);reviewHydrating++;loadReviewBook(id).finally(()=>{reviewHydrating--;drainReviewCovers();});}
+  }
+  async function loadReviewBook(id,force=false){
+    if(reviewFetches.has(id))return reviewFetches.get(id);
+    reviewLoadState.set(id,'loading');if(reviewActive===id)renderReviewReader();
+    const task=(async()=>{try{
+      const full=await fetchBookDetails(id,force);reviewData.set(id,full);reviewLoadState.set(id,'ready');
+      try{const result=await historyCall({action:'choiceMeta',id,book:full});choices.set(id,result.row);}catch{reviewLoadState.set(id,'memory');}
+    }catch{reviewLoadState.set(id,'failed');}
+    finally{reviewFetches.delete(id);if(drawerTab==='later')renderChoices();}
+    })();reviewFetches.set(id,task);return task;
+  }
+  function selectReview(id){if(!choices.has(id))return;reviewActive=id;renderCandidateReview();}
+  function draftFor(row){let draft=noteDrafts.get(row.id);if(!draft||(!draft.dirty&&!noteSaving.has(row.id))){draft={value:row.note||'',revision:row.noteRevision||0,dirty:false,open:draft?.open||false,message:''};noteDrafts.set(row.id,draft);}return draft;}
+  function renderReviewReader(){
+    const row=choices.get(reviewActive),content=cq('review-content');cq('review-empty').hidden=!!row;content.hidden=!row;if(!row)return;
+    const changed=content.dataset.id!==row.id;content.dataset.id=row.id;
+    const full=reviewData.get(row.id),status=syncStatus(row.id),draft=draftFor(row),load=reviewLoadState.get(row.id);
+    reviewSet(cq('review-title'),full?.title||row.title);reviewSet(cq('review-author'),full?.author||row.author||'作者信息待补充');reviewSet(cq('review-meta'),full?.meta||row.meta||'字数与连载状态待补充');
+    paintCover(cq('review-cover'),full?.cover||row.cover);paintBadge(cq('review-badge'),status);
+    reviewSet(cq('review-text'),full?.abstract||row.abstract||'暂无简介，点击重试读取。');if(changed)cq('review-text').scrollTop=0;
+    reviewSet(cq('review-load'),load==='loading'?'正在读取完整简介…':load==='failed'?'读取失败，保留已有简介。':load==='ready'?'完整简介':load==='memory'?'完整简介已读取，信息暂未保存到本地。':'已保存的简介');
+    cq('review-reload').hidden=!['failed','memory'].includes(load);cq('review-reload').disabled=load==='loading';
+    cq('review-sync').disabled=syncBusy||syncLoading||status.status==='success';reviewSet(cq('review-sync'),status.status==='success'?'已同步到官方待看':status.status==='failed'?'重试加入官方待看':'加入官方待看');
+    cq('review-sync').title=status.label;cq('review-detail').href='/page/'+row.id;
+    cq('review-skip').disabled=choiceBusy;cq('review-remove').disabled=choiceBusy;
+    cq('note-editor').hidden=!draft.open;cq('note-toggle').setAttribute('aria-expanded',String(draft.open));reviewSet(cq('note-toggle'),draft.open?'－ 收起备注':draft.dirty?'＋ 有未保存的备注':row.note?'＋ 查看备注':'＋ 留下一句备注（可选）');
+    if((changed||(!draft.dirty&&!noteSaving.has(row.id)))&&cq('note-input').value!==draft.value)cq('note-input').value=draft.value;
+    cq('note-save').disabled=noteSaving.has(row.id)||!draft.dirty;
+    cq('note-latest').hidden=!draft.conflict;
+    reviewSet(cq('note-message'),noteSaving.has(row.id)?'正在保存…':draft.message||(draft.dirty?'未保存；切换书籍会保留草稿。':row.note?'已保存在本地':'备注仅保存在本地。'));
+  }
+  cq('review-reload').onclick=()=>loadReviewBook(reviewActive,true);
+  cq('review-sync').onclick=()=>prepareSync([reviewActive]);
+  cq('review-skip').onclick=()=>{const row=choices.get(reviewActive);if(row)choose(row,'skip');};
+  cq('review-remove').onclick=()=>{const row=choices.get(reviewActive);if(row)choose(row,'none');};
+  cq('note-toggle').onclick=()=>{const row=choices.get(reviewActive);if(!row)return;const draft=draftFor(row);draft.open=!draft.open;renderReviewReader();};
+  cq('note-input').oninput=()=>{const row=choices.get(reviewActive);if(!row)return;const draft=draftFor(row);draft.value=cq('note-input').value;draft.dirty=draft.value!==(row.note||'');draft.message='';renderReviewReader();};
+  cq('note-save').onclick=async()=>{
+    const id=reviewActive,row=choices.get(id);if(!row||noteSaving.has(id))return;const draft=draftFor(row),value=draft.value;noteSaving.add(id);renderReviewReader();
+    try{const result=await historyCall({action:'note',id,note:value,revision:draft.revision});choices.set(id,result.row);
+      if(result.conflict){draft.conflict=true;draft.message='另一页面已修改备注。草稿已保留，请先核对最新备注。';}
+      else{draft.revision=result.row.noteRevision;draft.dirty=draft.value!==value;draft.conflict=false;draft.message=draft.dirty?'仍有未保存修改。':'已保存';}
+    }catch{draft.message='保存失败，草稿已保留，请重试。';}
+    finally{noteSaving.delete(id);renderChoices();}
+  };
+  cq('note-latest').onclick=()=>{const row=choices.get(reviewActive);if(!row)return;const latest=row.note||'';cq('note-input').value=latest;noteDrafts.set(row.id,{value:latest,revision:row.noteRevision||0,dirty:false,open:true,message:'已载入最新备注。'});renderReviewReader();};
+
+
   const wiredChoices=new WeakSet();
 
   // Book-attached preview: fixed overlay, no root overflow/scrollbar changes.
@@ -635,18 +795,35 @@
     introHost.style.left=left+'px';introHost.style.top=top+'px';introHost.style.width=width+'px';introHost.style.height=height+'px';
   }
   function updateIntroState(){if(!intro)return;const state=choices.get(intro.book.id)?.state||'none';iq('later').textContent=state==='later'?'已加入候选':'加入候选';iq('later').setAttribute('aria-pressed',String(state==='later'));iq('clear').hidden=state==='none';for(const id of ['later','skip','clear'])iq(id).disabled=!!intro.saving;}
+  function safeCover(value){try{const u=new URL(value,location.origin);return value&&u.protocol==='https:'&&!u.pathname.includes('/novel-static/5cb03bd354145bc7815a5e09d4b15cfc')?u.href:'';}catch{return '';}}
+  function pageBookData(doc,id){
+    const script=[...doc.scripts].find(el=>el.textContent.includes('window.__INITIAL_STATE__='))?.textContent;if(!script)return {};
+    const start=script.indexOf('window.__INITIAL_STATE__=')+'window.__INITIAL_STATE__='.length;let depth=0,quoted=false,escaped=false,end=start;
+    for(;end<script.length;end++){const c=script[end];if(quoted){if(escaped)escaped=false;else if(c==='\\')escaped=true;else if(c==='"')quoted=false;}else if(c==='"')quoted=true;else if(c==='{')depth++;else if(c==='}'&&!--depth){end++;break;}}
+    try{const data=parseOfficialJSON(script.slice(start,end)).page;return String(data?.bookId)===id?data:{};}catch{return {};}
+  }
+  async function fetchBookDetails(id,force=false){
+    let cached=introCache.get(id);
+    if(force||!cached||Date.now()-cached.time>600000){
+      const promise=(async()=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);try{
+        const response=await fetch('/page/'+id,{credentials:'same-origin',cache:'no-store',signal:controller.signal});
+        if(!response.ok)throw Error('请求失败');
+        const doc=new DOMParser().parseFromString(await response.text(),'text/html'),body=doc.querySelector('.page-abstract-content');
+        if(!body||!body.textContent.trim())throw Error('暂无完整简介');
+        const data=pageBookData(doc,id);
+        return {title:readText(doc.querySelector('h1')).trim(),abstract:readText(body).trim(),author:readText(doc.querySelector('.author-name')).trim(),cover:safeCover(data.thumbUri||doc.querySelector('.page-header .book-cover-img,.book-cover-img')?.getAttribute('src')),meta:[...[...doc.querySelectorAll('.info-label > *, .info-count')].map(e=>readText(e).trim()),...(!doc.querySelector('.info-label > *')?[readText(doc.querySelector('.info-label')).trim()]:[])].filter(Boolean).join(' · ')};
+      }finally{clearTimeout(timer);}})();
+      cached={time:Date.now(),promise};introCache.set(id,cached);if(introCache.size>60)introCache.delete(introCache.keys().next().value);
+    }
+    try{return await cached.promise;}catch(error){if(introCache.get(id)===cached)introCache.delete(id);throw error;}
+  }
   async function loadIntro(record,force=false){
     iq('status-text').textContent='正在核对完整简介…';iq('retry').hidden=true;
-    let cached=introCache.get(record.book.id);
-    try{
-      if(force||!cached||Date.now()-cached.time>600000){
-        const promise=(async()=>{const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);try{const response=await fetch('/page/'+record.book.id,{credentials:'same-origin',cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('请求失败');const doc=new DOMParser().parseFromString(await response.text(),'text/html');const body=doc.querySelector('.page-abstract-content');if(!body||!body.textContent.trim())throw Error('暂无完整简介');return {title:readText(doc.querySelector('h1')).trim()||record.book.title,abstract:readText(body).trim()};}finally{clearTimeout(timer);}})();
-        cached={time:Date.now(),promise};introCache.set(record.book.id,cached);if(introCache.size>60)introCache.delete(introCache.keys().next().value);
-      }
-      const full=await cached.promise;if(intro!==record)return;
-      iq('title').textContent=full.title;iq('body').textContent=full.abstract;iq('status-text').textContent='完整简介';
-    }catch{if(introCache.get(record.book.id)===cached)introCache.delete(record.book.id);if(intro!==record)return;iq('status-text').textContent=record.book.abstract?'核对失败，当前显示列表简介。':'暂时无法取得简介，可打开详情查看。';iq('retry').hidden=false;}
+    try{const full=await fetchBookDetails(record.book.id,force);if(intro!==record)return;
+      iq('title').textContent=full.title||record.book.title;iq('body').textContent=full.abstract;iq('status-text').textContent='完整简介';
+    }catch{if(intro!==record)return;iq('status-text').textContent=record.book.abstract?'核对失败，当前显示列表简介。':'暂时无法取得简介，可打开详情查看。';iq('retry').hidden=false;}
   }
+
   function openIntro(card,trigger){
     if(intro?.card===card)return;closeIntro(false);if(drawerTab)closeDrawer();
     const book=introBook(card);if(!book)return;
@@ -889,6 +1066,11 @@
     #fq-drawer-tabs button{border:0;background:transparent;padding:12px;color:#666}
     #fq-drawer-tabs button[aria-selected=true]{color:#ee642d;border-bottom:2px solid #ee642d}
     #fq-drawer-close{border:0;background:transparent;padding:4px 12px;font-size:20px}
+    #fq-drawer[data-review=true] #fq-drawer-dialog{height:min(86dvh,calc(100dvh - 104px));max-height:none;width:min(1220px,calc(100vw - 40px))}
+    #fq-drawer[data-review=true] #fq-drawer-head{padding:10px 20px}
+    #fq-drawer[data-review=true] #fq-drawer-tabs button{padding:8px 12px}
+    #fq-drawer[data-review=true] #fq-drawer-body{flex:1;overflow:hidden;padding:0 20px 16px;display:flex}
+    #fq-drawer[data-review=true] #fq-choice-host{height:100%;min-height:0}
     #fq-drawer-body{overflow:auto;overscroll-behavior:contain;min-height:0;padding:4px 24px 20px}
     #fq-drawer-body>#fq-keyword-filter-host,#fq-drawer-body>#fq-choice-host{position:static!important;margin:0!important;width:100%!important;max-width:none!important}
   `;document.head.append(overlayStyle);
@@ -904,7 +1086,7 @@
     closeIntro(false);
     const opening=!drawerTab;
     if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
-    drawerTab=tab;drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
+    drawerTab=tab;drawer.dataset.review=String(tab==='later');drawer.hidden=false;host.hidden=false;host.style.display=['rules','history'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
     drawer.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
     if(choiceListOpen){cq('filter').value=tab;renderChoices();if(tab==='later'&&(opening||!syncAccount))refreshOfficial();}
     else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='rules'&&!drawerRulesLoaded){resetWordDraft();$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
@@ -921,24 +1103,24 @@
   // Do not change root overflow: the site's scroll container resets when it changes.
   // Only the drawer may consume scrolling while it is open.
   drawer.addEventListener('wheel',e=>{
-    if(!e.composedPath().includes(drawerBody)||drawerBody.scrollHeight<=drawerBody.clientHeight)e.preventDefault();
+    const scroller=e.composedPath().find(el=>el?.matches?.('[data-review-scroll]'))||drawerBody;if(!e.composedPath().includes(scroller)||scroller.scrollHeight<=scroller.clientHeight)e.preventDefault();
   },{passive:false});
   drawer.addEventListener('touchmove',e=>{
-    if(!e.composedPath().includes(drawerBody)||drawerBody.scrollHeight<=drawerBody.clientHeight)e.preventDefault();
+    const scroller=e.composedPath().find(el=>el?.matches?.('[data-review-scroll]'))||drawerBody;if(!e.composedPath().includes(scroller)||scroller.scrollHeight<=scroller.clientHeight)e.preventDefault();
   },{passive:false});
   drawer.addEventListener('keydown',e=>{
     const target=e.composedPath()[0];
     const editable=target.matches?.('input,textarea,select,[contenteditable=true]');
     if(!editable&&['ArrowDown','ArrowUp','PageDown','PageUp','Home','End',' '].includes(e.key)&&!(e.key===' '&&target.matches?.('button'))){
-      e.preventDefault();const step=e.key.startsWith('Arrow')?40:drawerBody.clientHeight*0.85;
-      if(e.key==='Home')drawerBody.scrollTop=0;else if(e.key==='End')drawerBody.scrollTop=drawerBody.scrollHeight;
-      else drawerBody.scrollTop+=(['ArrowUp','PageUp'].includes(e.key)||(e.key===' '&&e.shiftKey)?-step:step);
+      e.preventDefault();const scrollArea=target.closest?.('[data-review-scroll]')||drawerBody,step=e.key.startsWith('Arrow')?40:scrollArea.clientHeight*0.85;
+      if(e.key==='Home')scrollArea.scrollTop=0;else if(e.key==='End')scrollArea.scrollTop=scrollArea.scrollHeight;
+      else scrollArea.scrollTop+=(['ArrowUp','PageUp'].includes(e.key)||(e.key===' '&&e.shiftKey)?-step:step);
     }
     if(e.key==='Escape'){e.preventDefault();closeDrawer();}
     if(e.key==='Tab'){
-      const roots=[drawer,shadow,cs];const items=roots.flatMap(r=>[...r.querySelectorAll('button,input,textarea,select,a[href]')]).filter(el=>!el.disabled&&el.getClientRects().length);
+      const roots=[drawer,shadow,cs];const items=roots.flatMap(r=>[...r.querySelectorAll('button,input,textarea,select,a[href],[tabindex="0"]')]).filter(el=>!el.disabled&&el.getClientRects().length);
       const current=shadow.activeElement||cs.activeElement||document.activeElement,index=items.indexOf(current);
-      if(items.length){e.preventDefault();const next=items[(index+(e.shiftKey?-1:1)+items.length)%items.length];next.focus({preventScroll:true});if(next.getRootNode()!==document){const rect=next.getBoundingClientRect(),bounds=drawerBody.getBoundingClientRect();if(rect.bottom>bounds.bottom)drawerBody.scrollTop+=rect.bottom-bounds.bottom;else if(rect.top<bounds.top)drawerBody.scrollTop+=rect.top-bounds.top;}}
+      if(items.length){e.preventDefault();const next=items[(index+(e.shiftKey?-1:1)+items.length)%items.length];next.focus({preventScroll:true});if(next.getRootNode()!==document){const area=next.closest('[data-review-scroll]')||drawerBody,rect=next.getBoundingClientRect(),bounds=area.getBoundingClientRect();if(rect.bottom>bounds.bottom)area.scrollTop+=rect.bottom-bounds.bottom;else if(rect.top<bounds.top)area.scrollTop+=rect.top-bounds.top;}}
     }
   });
   $('history-open').onclick=()=>openDrawer('history');$('history-back').onclick=()=>openDrawer('rules');
