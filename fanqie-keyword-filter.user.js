@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.9.1
+// @version      1.9.2
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -275,7 +275,7 @@
       #history-message,#history-save-warning{color:#a83e19;font-size:12px}#copy-fallback textarea{height:110px}
     </style>
     <section id="panel" hidden aria-label="番茄小说屏蔽设置">
-      <h2>书库 / 排行榜屏蔽 · v1.9.1</h2>
+      <h2>书库 / 排行榜屏蔽 · v1.9.2</h2>
       <div id="settings-view">
       <div id="status" role="status"></div>
       <p id="warning"></p>
@@ -639,6 +639,13 @@
   const reviewFilter=document.createElement('div');reviewFilter.id='review-filter';
   reviewFilter.innerHTML='<label>同步状态 <select id="review-status"><option value="all">全部候选</option><option value="pending">未同步</option><option value="success">已同步</option><option value="failed">同步失败</option></select></label><span id="review-count"></span>';
   reviewSearch.append(reviewFilter);
+  const reviewToolbar=document.createElement('div');reviewToolbar.id='review-toolbar';
+  reviewSearch.before(reviewToolbar);reviewToolbar.append(reviewSearch,cq('official-tools'));
+  const reviewFeedback=document.createElement('div');reviewFeedback.id='review-feedback';
+  reviewFeedback.append(cq('msg'),cq('sync-message'),cq('review-count'));cq('box').append(reviewFeedback);
+  // Feedback has a fixed slot so progress and undo messages never move the reading area.
+  const feedbackTitles=new MutationObserver(()=>{for(const id of ['msg','sync-message'])cq(id).title=cq(id).textContent;});
+  feedbackTitles.observe(reviewFeedback,{childList:true,subtree:true,characterData:true});
   const reviewLayout=document.createElement('div');reviewLayout.id='review-layout';
   cq('rows').before(reviewLayout);reviewLayout.append(cq('rows'));cq('rows').setAttribute('data-review-scroll','');
   cq('rows').setAttribute('aria-label','候选书籍列表');
@@ -647,13 +654,13 @@
   reviewLayout.append(reader);for(const id of ['note-input','review-title','review-meta','review-book-head'])cq(id).setAttribute('data-review-scroll','');
   const reviewStyle=document.createElement('style');
   reviewStyle.textContent=[
-    ':host([data-review=true]) #review-search{display:flex;align-items:center;gap:14px;flex-shrink:0;margin-bottom:8px}:host([data-review=true]) #review-filter{margin:0;flex-shrink:0}#review-count{white-space:nowrap}#review-filter label{white-space:nowrap}:host([data-review=true]) .sync-toolbar button{font-size:12px;padding:5px 8px;margin:0}',
-    ':host([data-review=true]) #box{height:100%;display:flex;flex-direction:column;padding:6px 0 0!important;min-height:0}',
-    ':host([data-review=true]) #query{margin:0!important;flex:1;min-width:120px;width:auto}',
+    ':host([data-review=true]) #review-search{display:flex;align-items:center;gap:10px;flex:1;min-width:260px;margin:0}:host([data-review=true]) #review-filter{margin:0;flex-shrink:0}#review-count{white-space:nowrap}#review-filter label{white-space:nowrap}:host([data-review=true]) .sync-toolbar button{font-size:12px;padding:5px 8px;margin:0}',
+    ':host([data-review=true]) #box{height:100%;display:flex;flex-direction:column;padding:0!important;min-height:0}',
+    ':host([data-review=true]) #query{margin:0!important;padding:5px 9px;flex:1;min-width:120px;width:auto;font-size:12px;height:32px}',
     '#review-filter{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px;color:#887b71;margin-bottom:6px}#review-filter select{padding:5px 10px;border:1px solid #e8ded7;border-radius:6px;background:#fff;color:#51463f}',
-    ':host([data-review=true]) #official-tools{flex-shrink:0;padding-bottom:8px}:host([data-review=true]) #official-tools>p:first-child{display:none}',
-    ':host([data-review=true]) #sync-message{height:20px;margin:4px 0 0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-    ':host([data-review=true]) #msg{height:24px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#msg:empty{visibility:hidden}',
+    ':host([data-review=true]) #official-tools{flex-shrink:0;padding:0}:host([data-review=true]) #official-tools>p:first-child{display:none}',
+    ':host([data-review=true]) #review-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:9px 0;flex-shrink:0}.sync-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
+    '#review-feedback{display:flex;align-items:center;gap:12px;min-height:26px;flex-shrink:0;border-top:1px solid #eee8e3;font-size:11px;color:#95867b}#review-feedback #msg,#review-feedback #sync-message{flex:1;min-width:0;margin:0;height:26px;line-height:26px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#review-feedback #msg:empty{display:none}#review-feedback #msg:not(:empty){flex:0 1 auto;max-width:50%}#review-feedback #msg button{padding:0 6px;line-height:20px;margin:0 4px;font-size:11px}#review-count{margin-left:auto;font-size:11px}:host(:not([data-review=true])) #sync-message,:host(:not([data-review=true])) #review-count{display:none}',
     ':host([data-review=true]) #review-layout{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,42%) minmax(0,1fr);border-top:1px solid #eee8e3}',
     ':host([data-review=true]) #rows{overflow:auto;overscroll-behavior:contain;overflow-anchor:none;scrollbar-gutter:stable;min-height:0;padding-right:12px}',
     ':host([data-review=true]) #rows>.review-row{display:grid;grid-template-columns:20px 76px minmax(0,1fr);grid-template-rows:1fr;gap:6px 10px;padding:14px 8px!important;min-height:140px;border-bottom:1px solid #eee8e3;border-left:3px solid transparent;background:white}',
@@ -667,14 +674,14 @@
     '.review-row-author,.review-row-meta{font-size:12px;color:#8b8077;line-height:1.6;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.review-row-meta{color:#a0958c}.review-row-snippet{font-size:12px;color:#71675f;margin-top:5px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.6}.review-row-note{min-height:18px;font-size:11px;color:#ad6d43;margin-top:4px}',
     '.review-row>.sync-state{display:none}',
     '#review-reader{min-width:0;min-height:0;border-left:1px solid #eee8e3;padding-left:20px;overflow:hidden}#review-empty{display:grid;height:100%;place-content:center;text-align:center;color:#9b8d82;padding:20px}',
-    '#review-content{height:100%;display:flex;flex-direction:column;min-height:0}#review-content>header{padding:14px 0 9px;flex-shrink:0}#review-book-head{display:flex;gap:16px;align-items:center;min-width:0}#review-book-head>div:last-child{min-width:0}',
-    '.reader-cover{width:84px;height:114px}.review-eyebrow{font-size:10px;color:#b07955;letter-spacing:2px}#review-title{display:block!important;font-size:18px;line-height:1.5;color:#33291f;margin:5px 0;max-height:54px;overflow:auto;overscroll-behavior:contain}#review-author,#review-meta{font-size:12px;color:#897b70;margin:3px 0}#review-meta{max-height:38px;overflow:auto;overscroll-behavior:contain}',
-    '.review-statusline{display:flex;align-items:center;justify-content:space-between;height:26px;font-size:11px;color:#a29285}#review-reload{border:0;font-size:11px;padding:0 3px;background:transparent;color:#ba653b}',
+    '#review-content{height:100%;display:flex;flex-direction:column;min-height:0}#review-content>header{padding:10px 0 6px;flex-shrink:0}#review-book-head{display:flex;gap:12px;align-items:center;min-width:0;max-height:96px;overflow:auto;overscroll-behavior:contain}#review-book-head>div:last-child{min-width:0}',
+    '.reader-cover{width:60px;height:82px}.review-eyebrow{display:none}#review-title{display:block!important;font-size:16px;line-height:1.5;color:#33291f;margin:0 0 4px;max-height:48px;overflow:auto;overscroll-behavior:contain}#review-author,#review-meta{font-size:12px;color:#897b70;margin:3px 0}#review-meta{max-height:38px;overflow:auto;overscroll-behavior:contain}',
+    '.review-statusline{display:flex;align-items:center;justify-content:space-between;height:20px;font-size:11px;color:#a29285}#review-reload{border:0;font-size:11px;padding:0 3px;background:transparent;color:#ba653b}',
     '#review-text{flex:1;min-height:30px;overflow:auto;overscroll-behavior:contain;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.95;font-size:14px;color:#4b4037;padding:12px 12px 12px 0;scrollbar-gutter:stable;border-top:1px solid #f1e9e2}',
     '#review-content footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px;flex-shrink:0;padding:10px 0 0;border-top:1px solid #eee8e3}#review-content footer button{margin:0;font-size:12px;padding:7px 10px}#review-content .primary{background:#f36b2a;color:white;border-color:#f36b2a}#review-content footer a{font-size:11px;margin-left:auto;color:#a75b32;text-decoration:none}',
     '#review-note{flex-shrink:0;padding:8px 0;position:relative}#note-toggle{border:0;background:transparent;padding:0;margin:0;font-size:12px;color:#a57857}#note-input{width:100%;height:62px;resize:none;border:1px solid #e6d9cc;border-radius:6px;padding:8px;font:12px/1.6 inherit;background:#fffcf8;color:#594638;overscroll-behavior:contain}#note-editor{position:absolute;left:0;right:0;bottom:100%;padding:12px;background:#fffcf8;border:1px solid #e6d9cc;border-radius:8px;box-shadow:0 -4px 20px #35241414;z-index:2}.note-toolbar{display:flex;align-items:center;gap:6px;min-height:28px}#note-message{font-size:11px;color:#a57857;flex:1}#note-save,#note-latest{font-size:11px;padding:3px 7px;margin:0}',
     '#official-tools{position:relative}#sync-review{position:absolute;left:0;right:0;top:100%;z-index:4;max-height:190px;box-shadow:0 8px 24px #0002;overflow:auto;overscroll-behavior:contain}#sync-review ul{max-height:70px}button:focus-visible,a:focus-visible,textarea:focus-visible{outline:2px solid #ed884f;outline-offset:2px}',
-    '@media(max-width:760px){:host([data-review=true]) #review-search{gap:6px}#review-count{display:none}:host([data-review=true]) #review-layout{grid-template-columns:minmax(160px,36%) minmax(0,1fr)}:host([data-review=true]) #rows>.review-row{grid-template-columns:17px minmax(0,1fr);gap:6px}.review-row>.review-cover{grid-column:2;grid-row:1}.review-row-main,.review-row>.candidate-check{grid-column:1}.review-row-snippet,.review-row-meta{display:none}#review-reader{padding-left:12px}.reader-cover{width:60px;height:82px}#review-title{font-size:15px}}',
+    '@media(max-width:760px){:host([data-review=true]) #review-search{gap:6px}#review-count{display:none}:host([data-review=true]) #review-layout{grid-template-columns:minmax(160px,36%) minmax(0,1fr)}:host([data-review=true]) #rows>.review-row{grid-template-columns:17px minmax(0,1fr);gap:6px}.review-row>.review-cover{grid-column:2;grid-row:1}.review-row-main{grid-column:2}.review-row>.candidate-check{grid-column:1}.review-row-snippet,.review-row-meta{display:none}#review-reader{padding-left:12px}.reader-cover{width:60px;height:82px}#review-title{font-size:15px}}',
     '@media(max-height:760px){#review-book-head{max-height:74px;overflow:auto;overscroll-behavior:contain}.review-eyebrow{display:none}.review-statusline{height:20px}#review-meta{max-height:19px}.reader-cover{width:44px;height:60px}#review-content>header{padding-top:8px}#review-title{font-size:16px;max-height:48px}#note-input{height:48px}#review-content footer{padding-top:6px}#review-content footer button{padding:5px 7px}}'
   ].join('\n');cs.append(reviewStyle);
   cq('sync-review').setAttribute('data-review-scroll','');
@@ -1081,22 +1088,23 @@
     #fq-drawer[hidden]{display:none!important}
     #fq-drawer{position:fixed;inset:0;z-index:2147483600;background:#0004;font:14px/1.6 system-ui;color:#333}
     #fq-drawer-dialog{position:absolute;top:80px;left:50%;transform:translateX(-50%);width:min(1120px,calc(100vw - 40px));max-height:min(75dvh,calc(100dvh - 104px));display:flex;flex-direction:column;background:#fff;border-radius:0 0 12px 12px;box-shadow:0 12px 40px #0002;overflow:hidden}
-    #fq-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid #eee}
-    #fq-drawer-tabs{display:flex;gap:12px;flex-wrap:wrap;padding:0 24px;border-bottom:1px solid #eee}
+    #fq-drawer-head{display:flex;align-items:center;gap:24px;padding:0 20px;border-bottom:1px solid #eee;flex-shrink:0;min-height:46px}#fq-drawer-title{white-space:nowrap;font-size:14px}
+    #fq-drawer-tabs{display:flex;align-self:stretch;align-items:stretch;gap:8px;flex:1;min-width:0;overflow-x:auto;overscroll-behavior:contain}
     #fq-drawer button{font:inherit;cursor:pointer}
-    #fq-drawer-tabs button{border:0;background:transparent;padding:12px;color:#666}
+    #fq-drawer-tabs button{border:0;background:transparent;padding:10px 12px;color:#666;white-space:nowrap}
     #fq-drawer-tabs button[aria-selected=true]{color:#ee642d;border-bottom:2px solid #ee642d}
-    #fq-drawer-close{border:0;background:transparent;padding:4px 12px;font-size:20px}
-    #fq-drawer[data-review=true] #fq-drawer-dialog{height:min(86dvh,calc(100dvh - 104px));max-height:none;width:min(1220px,calc(100vw - 40px))}
-    #fq-drawer[data-review=true] #fq-drawer-head{padding:10px 20px}
+    #fq-drawer-close{border:0;background:transparent;padding:4px 8px;font-size:20px;flex-shrink:0}
+    #fq-drawer[data-review=true] #fq-drawer-dialog{height:calc(100dvh - 96px);max-height:none;width:min(1220px,calc(100vw - 40px))}
+    @media(max-width:760px){#fq-drawer-head{gap:10px;padding:0 12px}#fq-drawer-tabs{gap:0}#fq-drawer-title{font-size:12px}#fq-drawer #fq-drawer-tabs button{padding:8px;font-size:12px}}
     #fq-drawer[data-review=true] #fq-drawer-tabs button{padding:8px 12px}
-    #fq-drawer[data-review=true] #fq-drawer-body{flex:1;overflow:hidden;padding:0 20px 16px;display:flex}
+    #fq-drawer[data-review=true] #fq-drawer-body{flex:1;overflow:hidden;padding:0 20px;display:flex}
     #fq-drawer[data-review=true] #fq-choice-host{height:100%;min-height:0}
     #fq-drawer-body{overflow:auto;overscroll-behavior:contain;min-height:0;padding:4px 24px 20px}
     #fq-drawer-body>#fq-keyword-filter-host,#fq-drawer-body>#fq-choice-host{position:static!important;margin:0!important;width:100%!important;max-width:none!important}
   `;document.head.append(overlayStyle);
   drawer=document.createElement('div');drawer.id='fq-drawer';drawer.hidden=true;
-  drawer.innerHTML='<section id="fq-drawer-dialog" role="dialog" aria-modal="true" aria-labelledby="fq-drawer-title"><div id="fq-drawer-head"><strong id="fq-drawer-title">我的选书与筛选</strong><button id="fq-drawer-close" aria-label="关闭">×</button></div><div id="fq-drawer-tabs" role="tablist"></div><div id="fq-drawer-body"></div></section>';
+  drawer.innerHTML='<section id="fq-drawer-dialog" role="dialog" aria-modal="true" aria-labelledby="fq-drawer-title"><div id="fq-drawer-head"><strong id="fq-drawer-title">我的选书</strong><button id="fq-drawer-close" aria-label="关闭">×</button></div><div id="fq-drawer-tabs" role="tablist"></div><div id="fq-drawer-body"></div></section>';
+  drawer.querySelector('#fq-drawer-head').insertBefore(drawer.querySelector('#fq-drawer-tabs'),drawer.querySelector('#fq-drawer-close'));
   document.body.append(drawer);
   const drawerBody=drawer.querySelector('#fq-drawer-body');drawerBody.append(choiceHost,host);
   host.style.cssText='display:none';choiceHost.style.cssText='display:none';
