@@ -22,10 +22,11 @@ const cards=()=>[...w.document.querySelectorAll('[data-fq-stream] .stack-book-it
 const host=()=>w.document.getElementById('fq-intro-host');
 const root=()=>host().shadowRoot;
 const q=id=>root().getElementById(id);
-const open=i=>cards()[i].querySelector('.fq-intro-open').click();
+const open=i=>cards()[i].querySelector('.fq-intro-hitarea').click();
 const snapshot=()=>({y:w.scrollY,url:w.location.href,html:w.document.documentElement.getAttribute('style'),body:w.document.body.getAttribute('style')});
 (async()=>{
- w.eval(source);await until(()=>cards().length===3&&cards()[0].querySelector('.fq-intro-open'));
+ w.eval(source);await until(()=>cards().length===3&&cards()[0].querySelector('.fq-intro-hitarea'));
+ assert.equal(w.document.querySelector('.fq-intro-open'),null,'small preview button removed');
  assert.equal(cards()[2].getAttribute('data-fq-keyword-blocked'),'hide');assert.ok(values['fq-history-book-100003']);
  const before=snapshot();open(0);await until(()=>q('status-text').textContent==='完整简介');
  assert.equal(host().hidden,false);assert.deepEqual(snapshot(),before);
@@ -34,7 +35,7 @@ const snapshot=()=>({y:w.scrollY,url:w.location.href,html:w.document.documentEle
  assert.equal(q('detail').target,'_blank');assert.equal(q('detail').getAttribute('href'),'/page/100001');
  assert.equal(requests.filter(r=>r.url==='/page/100001').length,1);
  q('close').click();assert.equal(host().hidden,true);assert.deepEqual(snapshot(),before);
- assert.equal(w.document.activeElement,cards()[0].querySelector('.fq-intro-open'));
+ assert.equal(w.document.activeElement,cards()[0].querySelector('.fq-intro-hitarea'));
  open(0);await until(()=>q('status-text').textContent==='完整简介');assert.equal(requests.filter(r=>r.url==='/page/100001').length,1,'cache on reopen');
  const wheel=new w.WheelEvent('wheel',{bubbles:true,cancelable:true});q('close').dispatchEvent(wheel);assert.ok(wheel.defaultPrevented);
  const space=new w.KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true});q('body').dispatchEvent(space);assert.ok(space.defaultPrevented);assert.deepEqual(snapshot(),before);
@@ -60,12 +61,12 @@ const snapshot=()=>({y:w.scrollY,url:w.location.href,html:w.document.documentEle
  const notice=w.document.getElementById('fq-filter-bar').shadowRoot.getElementById('intro-notice');
  await until(()=>!notice.hidden);notice.querySelector('button').click();await until(()=>notice.hidden);assert.equal(values['fq-choice-100001'].state,'later');assert.notEqual(cards()[0].getAttribute('data-fq-keyword-blocked'),'hide');
  // Appended books receive the same preview controls, including retry on fetch failure.
- const more=w.document.querySelectorAll('.fq-stream-controls button')[1];more.click();await until(()=>cards().length===4&&cards()[3].querySelector('.fq-intro-open'));
+ const more=w.document.querySelectorAll('.fq-stream-controls button')[1];more.click();await until(()=>cards().length===4&&cards()[3].querySelector('.fq-intro-hitarea'));
  reply=async()=>{throw Error('模拟断网');};open(3);await until(()=>!q('retry').hidden);assert.equal(q('body').textContent,'新简介');
  reply=async()=>({ok:true,text:async()=>'<h1>新书全名</h1><div class="page-abstract-content">追加完整简介</div>'});q('retry').click();await until(()=>q('status-text').textContent==='完整简介');assert.equal(q('body').textContent,'追加完整简介');
  w.document.body.dispatchEvent(new w.Event('pointerdown',{bubbles:true}));assert.equal(host().hidden,true);
  assert.deepEqual(snapshot(),before);assert.equal(scrollCalls.length,0);assert.ok(focusCalls.every(o=>o?.preventScroll===true),'script focus must never scroll the page');
  assert.ok(requests.every(r=>!r.options?.method||r.options.method==='GET'),'preview and local choices must not write official shelf');
  console.log('PASS intro: stable open/close, text-safe detail/cache, metadata, stale-result isolation, candidate persistence, failure rollback, skip/undo, appended cards, retry and keyboard/wheel containment');
-})().catch(e=>{console.error(e,{cards:cards().length,controls:cards().map(c=>c.querySelector('.fq-intro-open')?.textContent),status:q('status-text')?.textContent,requests:requests.map(r=>r.url)});process.exitCode=1;}).finally(()=>w.close());
+})().catch(e=>{console.error(e,{cards:cards().length,controls:cards().map(c=>c.querySelector('.fq-intro-hitarea')?.textContent),status:q('status-text')?.textContent,requests:requests.map(r=>r.url)});process.exitCode=1;}).finally(()=>w.close());
 
