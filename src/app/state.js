@@ -7,6 +7,8 @@ let reveal = false;
 let timer;
 let lastPath = location.pathname + location.search;
 const normalize = filterNormalize;
-const supportedPage = () => /^\/(?:library|rank)(?:\/|$)/.test(location.pathname);
+const isSelectionPage = () => /^\/library\/?$/.test(location.pathname) && new URLSearchParams(location.search).get('fq_view') === 'selection';
+const selectionURL = tab => '/library?fq_view=selection#' + (['later','skip','backup'].includes(tab) ? tab : 'later');
+const supportedPage = () => !isSelectionPage() && /^\/(?:library|rank)(?:\/|$)/.test(location.pathname);
 
 const readText=createTextReader({fonts:FONTS,cardSelector:CARD});

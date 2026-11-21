@@ -22,13 +22,13 @@ filterTool.innerHTML='<svg width="25" height="25" viewBox="0 0 24 24" fill="none
 const toolPageStyle=document.createElement('style');toolPageStyle.textContent='#fq-filter-tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;width:64px;height:64px;border:0;border-radius:6px;background:white;color:#333;font-family:inherit;font-size:12px;line-height:1.4;cursor:pointer;padding:6px;box-sizing:border-box}#fq-filter-tool:hover,#fq-filter-tool[aria-expanded=true]{background:#fff4ec;color:#ff681f}#fq-filter-tool:focus-visible{outline:2px solid #ff742b;outline-offset:2px}#fq-filter-tool[hidden],#fq-filter-bar[hidden]{display:none!important}#fq-tools-fallback{position:fixed;right:12px;bottom:120px;z-index:1000;padding:4px;background:white;border-radius:10px;box-shadow:0 6px 24px #0001}';
 document.head.append(toolPageStyle);
 const toolFallback=document.createElement('div');toolFallback.id='fq-tools-fallback';
-function positionFilterTools(){if(!filterToolsOpen)return;const r=filterTool.getBoundingClientRect(),width=Math.min(340,innerWidth-24),height=filterPopup.getBoundingClientRect().height;filterBar.style.width=width+'px';filterBar.style.left=Math.max(12,Math.min(r.left-width-12,innerWidth-width-12))+'px';filterBar.style.top=Math.max(92,Math.min(r.top,innerHeight-height-12))+'px';}
+function positionFilterTools(){if(!filterToolsOpen||drawerTab)return;const r=filterTool.getBoundingClientRect(),width=Math.min(340,innerWidth-24),height=filterPopup.getBoundingClientRect().height;filterBar.style.width=width+'px';filterBar.style.left=Math.max(12,Math.min(r.left-width-12,innerWidth-width-12))+'px';filterBar.style.top=Math.max(92,Math.min(r.top,innerHeight-height-12))+'px';}
 function closeFilterTools(focus=false){filterToolsOpen=false;filterPopup.hidden=true;filterTool.setAttribute('aria-expanded','false');if(focus&&filterTool.isConnected)filterTool.focus({preventScroll:true});}
 filterTool.onclick=()=>{if(filterToolsOpen){closeFilterTools(true);return;}if(drawerTab)closeDrawer();closeIntro(false);filterToolsOpen=true;filterPopup.hidden=false;filterTool.setAttribute('aria-expanded','true');positionFilterTools();bq('tools-close').focus({preventScroll:true});};
 bq('tools-close').onclick=()=>closeFilterTools(true);
 bs.addEventListener('keydown',e=>{if(e.key==='Escape'&&filterToolsOpen){e.preventDefault();closeFilterTools(true);}});
 for(const type of ['wheel','touchmove'])bs.addEventListener(type,e=>{const scroller=e.composedPath().includes(bq('keyword-tags'))?bq('keyword-tags'):filterPopup;if(filterToolsOpen&&scroller.scrollHeight<=scroller.clientHeight)e.preventDefault();},{passive:false});
-document.addEventListener('pointerdown',e=>{if(filterToolsOpen&&!e.composedPath().includes(filterBar)&&!e.composedPath().includes(filterTool))closeFilterTools();});
+document.addEventListener('pointerdown',e=>{if(filterToolsOpen&&!drawerTab&&!e.composedPath().includes(filterBar)&&!e.composedPath().includes(filterTool))closeFilterTools();});
 window.addEventListener('resize',positionFilterTools);
 
 
@@ -95,7 +95,7 @@ drawer.addEventListener('keydown',e=>{
     else scrollArea.scrollTop+=(['ArrowUp','PageUp'].includes(e.key)||(e.key===' '&&e.shiftKey)?-step:step);
   }
   if(e.key==='Escape'){e.preventDefault();closeDrawer();}
-  if(e.key==='Tab'){
+  if(e.key==='Tab'&&!isSelectionPage()){
     const roots=[drawer,shadow,cs];const items=roots.flatMap(r=>[...r.querySelectorAll('button,input,textarea,select,summary,a[href],[tabindex="0"]')]).filter(el=>!el.disabled&&el.getClientRects().length);
     const current=shadow.activeElement||cs.activeElement||document.activeElement,index=items.indexOf(current);
     if(items.length){e.preventDefault();const next=items[(index+(e.shiftKey?-1:1)+items.length)%items.length];next.focus({preventScroll:true});if(next.getRootNode()!==document){const area=next.closest('[data-review-scroll]')||drawerBody,rect=next.getBoundingClientRect(),bounds=area.getBoundingClientRect();if(rect.bottom>bounds.bottom)area.scrollTop+=rect.bottom-bounds.bottom;else if(rect.top<bounds.top)area.scrollTop+=rect.top-bounds.top;}}
@@ -120,6 +120,7 @@ function updateFilterBar(total,hits){
   bq('reveal').textContent=reveal?'恢复隐藏':'临时显示隐藏书籍';
 }
 function mountFilterBar(){
+  mountSelectionPage();
   if(intro){if(!supportedPage()||!intro.card.isConnected||intro.card.getAttribute(MARK)==='hide')closeIntro(false);else positionIntro();}
   const active=supportedPage(),native=document.querySelector('.float-wrapper');
   filterBar.hidden=!active;filterTool.hidden=!active;
@@ -127,5 +128,5 @@ function mountFilterBar(){
   else if(native){if(filterTool.parentElement!==native)native.append(filterTool);toolFallback.remove();}
   else{if(!toolFallback.isConnected)document.body.append(toolFallback);if(filterTool.parentElement!==toolFallback)toolFallback.append(filterTool);}
   if(filterToolsOpen)positionFilterTools();
-  if(!supportedPage()&&!detailBook()&&!/^\/bookshelf(?:\/|$)/.test(location.pathname)&&drawerTab)closeDrawer();
+  if(!isSelectionPage()&&!supportedPage()&&!detailBook()&&!/^\/bookshelf(?:\/|$)/.test(location.pathname)&&drawerTab)closeDrawer();
 }

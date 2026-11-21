@@ -100,7 +100,7 @@ function syncStream() {
   const native=document.querySelector('.muye-stack-book-list:not([data-fq-stream])');
   const key=routeKey();
   if(stream&&(stream.key!==key||stream.native!==native||!stream.list.isConnected))disposeStream();
-  if(!infiniteEnabled||!/^\/library(?:\/|$)/.test(location.pathname)||!native?.querySelector('.stack-book-item')) {if(stream)disposeStream();return;}
+  if(isSelectionPage()||!infiniteEnabled||!/^\/library(?:\/|$)/.test(location.pathname)||!native?.querySelector('.stack-book-item')) {if(stream)disposeStream();return;}
   if(stream)return;
   const reseed=streamStarted; streamStarted=true;
   const list=native.cloneNode(true);list.setAttribute('data-fq-stream','');list.removeAttribute('data-fq-native-hidden');

@@ -20,6 +20,7 @@
   "src/features/shell/drawer.js",
   "src/features/rules/layout.js",
   "src/features/backup/panel.js",
+  "src/features/shell/selection-page.js",
   "src/app/services.js",
   "src/app/bootstrap.js"
 ]

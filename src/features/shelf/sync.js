@@ -23,9 +23,11 @@ function renderSyncTools(){
   for(const id of selectedCandidates)if(choices.get(id)?.state!=='later')selectedCandidates.delete(id);
   cq('sync-batch').textContent='加入官方待看（'+selectedCandidates.size+'）';
   cq('sync-batch').disabled=syncBusy||syncLoading||!selectedCandidates.size;
+  cq('sync-batch').hidden=!selectedCandidates.size&&!syncBusy;
   cq('sync-select').disabled=syncBusy||syncLoading;
   cq('sync-refresh').disabled=syncBusy||syncLoading;
   cq('sync-retry').disabled=syncBusy||syncLoading||!candidateRows().some(r=>syncStatus(r.id).status==='failed');
+  cq('sync-retry').hidden=!candidateRows().some(r=>syncStatus(r.id).status==='failed');
 }
 function addSyncControls(row,el){
   const current=syncStatus(row.id),check=document.createElement('input');check.type='checkbox';check.className='candidate-check';check.checked=selectedCandidates.has(row.id);check.disabled=syncBusy||syncLoading||current.status==='success';check.setAttribute('aria-label','选择候选：'+row.title);check.onchange=()=>{check.checked?selectedCandidates.add(row.id):selectedCandidates.delete(row.id);renderChoices();};el.prepend(check);

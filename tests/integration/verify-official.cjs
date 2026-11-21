@@ -48,7 +48,7 @@ const until=async fn=>{for(let n=0;n<120;n++){if(fn())return;await wait(20);}thr
  const values={};for(const id of ['200001','200002','200003'])values['fq-choice-'+id]={id,title:'候选书'+id,author:'作者',state:'later',updatedAt:1};
  const queues=new Map();const locks={request(name,fn){const job=(queues.get(name)||Promise.resolve()).then(fn);queues.set(name,job.catch(()=>{}));return job;}};
  const windows=[];
- function page(){const dom=new JSDOM('<nav><div class="nav-item"><a href="/library">书库</a></div></nav>',{url:'https://fanqienovel.com/library',runScripts:'outside-only'});const w=dom.window;windows.push(w);w.fetch=server.fetch;w.navigator.locks=locks;w.document.cookie='passport_csrf_token=test';w.GM_getValue=(k,d)=>values[k]??d;w.GM_setValue=async(k,v)=>{values[k]=structuredClone(v);};w.GM_listValues=()=>Object.keys(values);w.GM_registerMenuCommand=()=>{};w.eval(source);return w;}
+ function page(){const dom=new JSDOM('<nav><div class="nav-item"><a href="/library">书库</a></div></nav>',{url:'https://fanqienovel.com/library?fq_view=selection#later',runScripts:'outside-only'});const w=dom.window;windows.push(w);w.fetch=server.fetch;w.navigator.locks=locks;w.document.cookie='passport_csrf_token=test';w.GM_getValue=(k,d)=>values[k]??d;w.GM_setValue=async(k,v)=>{values[k]=structuredClone(v);};w.GM_listValues=()=>Object.keys(values);w.GM_registerMenuCommand=()=>{};w.eval(source);return w;}
  try{
   const w=page();await until(()=>w.document.querySelector('#fq-drawer'));const sh=w.document.getElementById('fq-choice-host').shadowRoot;
   const nav=[...w.document.querySelectorAll('.nav-item a')].find(e=>e.textContent==='我的选书');nav.click();await until(()=>sh.getElementById('sync-message').textContent.includes('已核对'));

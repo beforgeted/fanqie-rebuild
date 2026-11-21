@@ -20,7 +20,7 @@ const until=async fn=>{for(let i=0;i<180;i++){if(fn())return;await wait(20);}thr
  const rows=[{book_id:'200001',group_id:'7888888888888888888',group_name:'待看'}],requests=[],writes=[];
  let failSave=false,failDetails='',delayId='',release;
  const queues=new Map(),locks={request(name,fn){const task=(queues.get(name)||Promise.resolve()).then(fn);queues.set(name,task.catch(()=>{}));return task;}};
- const w=new JSDOM('<nav><div class="nav-item"><a href="/library">书库</a></div></nav>',{url:'https://fanqienovel.com/library',runScripts:'outside-only'}).window;
+ const w=new JSDOM('<nav><div class="nav-item"><a href="/library">书库</a></div></nav>',{url:'https://fanqienovel.com/library?fq_view=selection#later',runScripts:'outside-only'}).window;
  w.IntersectionObserver=class{observe(){}unobserve(){}disconnect(){}};
  w.navigator.locks=locks;w.document.cookie='passport_csrf_token=test';
  w.GM_getValue=(k,d)=>values[k]??d;w.GM_listValues=()=>Object.keys(values);w.GM_registerMenuCommand=()=>{};
@@ -63,7 +63,7 @@ const until=async fn=>{for(let i=0;i<180;i++){if(fn())return;await wait(20);}thr
   q('review-status').value='all';q('review-status').dispatchEvent(new w.Event('change'));select('200002');q('review-remove').click();await until(()=>values['fq-choice-200002'].state==='none');assert.equal(values['fq-choice-200002'].note,'另一页修改');assert.equal(rows.some(r=>r.book_id==='200002'),false);
   q('msg').querySelector('button').click();await until(()=>values['fq-choice-200002'].state==='later');assert.equal(values['fq-choice-200002'].note,'另一页修改');
   select('200002');q('review-skip').click();await until(()=>values['fq-choice-200002'].state==='skip');q('msg').querySelector('button').click();await until(()=>values['fq-choice-200002'].state==='later');
-  w.document.querySelector('#fq-drawer-close').click();assert.equal(w.document.querySelector('#fq-drawer').hidden,true);
+  q('rows').scrollTop=420;const originalActive=q('review-content').dataset.id;w.document.querySelector('#fq-data-management').click();assert.equal(w.document.getElementById('fq-keyword-filter-host').shadowRoot.getElementById('backup-view').hidden,false);w.document.querySelector('[data-tab=later]').click();assert.equal(q('rows').scrollTop,420);assert.equal(q('review-content').dataset.id,originalActive);w.document.querySelector('#fq-drawer').dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(w.document.querySelector('#fq-drawer').hidden,false,'Escape does not close an independent page');
   assert.deepEqual({url:w.location.href,html:w.document.documentElement.getAttribute('style'),body:w.document.body.getAttribute('style')},initial);
   console.log('PASS candidate review: covers/badges, on-demand fetch, stable rows/scroll, drafts, failed save/retry, cross-tab conflicts, stale response, filters/batch sync, remove/skip/undo and data retention');
  }finally{w.close();}
