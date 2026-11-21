@@ -1,0 +1,150 @@
+{
+  "label": "final",
+  "browser": "Chrome/157.0.8103.79",
+  "words": 1000,
+  "viewport": "1366x768",
+  "samples": [
+    {
+      "books": 100,
+      "idle": {
+        "longTasks": 0,
+        "maxMs": 0
+      },
+      "toggleMs": [
+        38.7,
+        29.8,
+        35.5,
+        29.8
+      ],
+      "changedWordsMs": [
+        46,
+        35
+      ],
+      "appendMs": 23,
+      "navigation": {
+        "enterMs": 45,
+        "backMs": 23,
+        "sameDOM": true,
+        "sameURL": true,
+        "scrollDelta": 0
+      },
+      "scroll": {
+        "p95FrameMs": 8,
+        "maxFrameMs": 8
+      },
+      "state": {
+        "count": 118,
+        "unique": 118,
+        "hidden": 59,
+        "x": [
+          123,
+          503,
+          883
+        ]
+      },
+      "memory": {
+        "documents": 3,
+        "nodes": 5730,
+        "jsEventListeners": 914
+      }
+    },
+    {
+      "books": 500,
+      "idle": {
+        "longTasks": 0,
+        "maxMs": 0
+      },
+      "toggleMs": [
+        93.8,
+        42.7,
+        80.1,
+        43.7
+      ],
+      "changedWordsMs": [
+        93,
+        119
+      ],
+      "appendMs": 21,
+      "navigation": {
+        "enterMs": 16,
+        "backMs": 67,
+        "sameDOM": true,
+        "sameURL": true,
+        "scrollDelta": 0
+      },
+      "scroll": {
+        "p95FrameMs": 9,
+        "maxFrameMs": 9
+      },
+      "state": {
+        "count": 518,
+        "unique": 518,
+        "hidden": 259,
+        "x": [
+          123,
+          503,
+          883
+        ]
+      },
+      "memory": {
+        "documents": 6,
+        "nodes": 20260,
+        "jsEventListeners": 4228
+      }
+    },
+    {
+      "books": 1000,
+      "idle": {
+        "longTasks": 0,
+        "maxMs": 0
+      },
+      "toggleMs": [
+        164.4,
+        62.5,
+        137.6,
+        61.4
+      ],
+      "changedWordsMs": [
+        157,
+        210
+      ],
+      "appendMs": 28,
+      "navigation": {
+        "enterMs": 22,
+        "backMs": 107,
+        "sameDOM": true,
+        "sameURL": true,
+        "scrollDelta": 0
+      },
+      "scroll": {
+        "p95FrameMs": 8,
+        "maxFrameMs": 8
+      },
+      "state": {
+        "count": 1018,
+        "unique": 1018,
+        "hidden": 509,
+        "x": [
+          123,
+          503,
+          883
+        ]
+      },
+      "memory": {
+        "documents": 9,
+        "nodes": 45790,
+        "jsEventListeners": 10542
+      }
+    }
+  ],
+  "notes": "Isolated extension and intercepted fixtures only. Warm list size, not live network speed. Seed batch establishes size; measured additions use 18 books.",
+  "continuous": {
+    "count": 1008,
+    "unique": 1008,
+    "hidden": 504,
+    "retryPreservesDOM": true,
+    "allHiddenPauses": true
+  },
+  "dataPreserved": true,
+  "version": "1.13.6"
+}

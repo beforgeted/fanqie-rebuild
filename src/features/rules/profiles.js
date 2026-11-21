@@ -39,7 +39,7 @@ function resetProfileEditor(){
   $('profile-delete').disabled=profileState.profiles.length<=1;$('profile-confirm').hidden=true;$('profile-delete-confirm').hidden=true;$('profile-latest').hidden=true;$('profile-message').textContent='';$('words').value='';
   renderGroupEditor();$('word-feedback').textContent='';
 }
-function applyProfileState(next){if(next.revision<profileState.revision)return;profileState=filterState(next);config={words:profileState.words,enabled:profileState.enabled,abstract:profileState.abstract};matchFilterWords=compileFilterWords(config.words);}
+function applyProfileState(next){if(next.revision<profileState.revision)return;profileState=filterState(next);const changed=JSON.stringify(config.words)!==JSON.stringify(profileState.words);config={words:profileState.words,enabled:profileState.enabled,abstract:profileState.abstract};if(changed)matchFilterWords=compileFilterWords(config.words);}
 async function persistProfiles(next,revision=profileState.revision){
   if(profileBusy)throw Error('正在保存，请稍后再试。');profileBusy=true;$('settings-view').inert=true;if(drawerReady)bq('bar').inert=true;
   try{
@@ -59,7 +59,7 @@ async function switchProfile(id,discard=false){
   if(!discard&&profileDirty()){
     pendingProfile=id;openDrawer('rules');$('profile-select').value=profileState.activeId;$('profile-confirm').hidden=false;$('profile-confirm-text').textContent='当前方案有未保存修改。切换前请选择：';return;
   }
-  try{const next=cloneProfile(profileState);next.activeId=id;await persistProfiles(next);resetWordDraft();$('profile-message').textContent='已切换方案，当前书流已重新筛选。';}
+  try{const next=cloneProfile(profileState);next.activeId=id;await persistProfiles(next);if(drawerRulesLoaded)resetWordDraft();$('profile-message').textContent='已切换方案，当前书流已重新筛选。';}
   catch(error){$('profile-message').textContent='切换失败：'+error.message;if(drawerReady)bq('error').textContent='切换失败：'+error.message;}
   finally{$('profile-select').value=profileState.activeId;if(drawerReady)bq('profile-quick').value=profileState.activeId;}
 }

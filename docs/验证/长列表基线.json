@@ -1,0 +1,131 @@
+{
+  "label": "baseline",
+  "browser": "Chrome/157.0.8103.79",
+  "words": 1000,
+  "viewport": "1366x768",
+  "samples": [
+    {
+      "books": 100,
+      "idle": {
+        "longTasks": 0,
+        "maxMs": 0
+      },
+      "toggleMs": [
+        58.6,
+        77.9,
+        59.4,
+        77.8
+      ],
+      "appendMs": 59,
+      "navigation": {
+        "enterMs": 48,
+        "backMs": 54,
+        "sameDOM": true,
+        "sameURL": true,
+        "scrollDelta": 0
+      },
+      "scroll": {
+        "p95FrameMs": 6,
+        "maxFrameMs": 34
+      },
+      "state": {
+        "count": 118,
+        "unique": 118,
+        "hidden": 59,
+        "x": [
+          123,
+          503,
+          883
+        ]
+      },
+      "memory": {
+        "documents": 8,
+        "nodes": 33561,
+        "jsEventListeners": 8917
+      }
+    },
+    {
+      "books": 500,
+      "idle": {
+        "longTasks": 0,
+        "maxMs": 0
+      },
+      "toggleMs": [
+        128.6,
+        204.9,
+        113.4,
+        211.7
+      ],
+      "appendMs": 187,
+      "navigation": {
+        "enterMs": 15,
+        "backMs": 365,
+        "sameDOM": true,
+        "sameURL": true,
+        "scrollDelta": 0
+      },
+      "scroll": {
+        "p95FrameMs": 6,
+        "maxFrameMs": 7
+      },
+      "state": {
+        "count": 518,
+        "unique": 518,
+        "hidden": 259,
+        "x": [
+          123,
+          503,
+          883
+        ]
+      },
+      "memory": {
+        "documents": 6,
+        "nodes": 32290,
+        "jsEventListeners": 8226
+      }
+    },
+    {
+      "books": 1000,
+      "idle": {
+        "longTasks": 0,
+        "maxMs": 0
+      },
+      "toggleMs": [
+        219.3,
+        368.5,
+        205.6,
+        374
+      ],
+      "appendMs": 357,
+      "navigation": {
+        "enterMs": 24,
+        "backMs": 738,
+        "sameDOM": true,
+        "sameURL": true,
+        "scrollDelta": 0
+      },
+      "scroll": {
+        "p95FrameMs": 6,
+        "maxFrameMs": 6
+      },
+      "state": {
+        "count": 1018,
+        "unique": 1018,
+        "hidden": 509,
+        "x": [
+          123,
+          503,
+          883
+        ]
+      },
+      "memory": {
+        "documents": 9,
+        "nodes": 96371,
+        "jsEventListeners": 22539
+      }
+    }
+  ],
+  "notes": "Isolated extension and intercepted fixtures only. Warm list size, not live network speed. Seed batch establishes size; measured additions use 18 books.",
+  "dataPreserved": true,
+  "version": "1.13.5"
+}

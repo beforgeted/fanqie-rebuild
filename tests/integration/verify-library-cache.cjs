@@ -1,0 +1,21 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');const {JSDOM}=require('jsdom');
+const root=path.resolve(__dirname,'../..'),source=fs.readFileSync(path.join(root,'fanqie-keyword-filter.user.js'),'utf8');
+const wait=ms=>new Promise(r=>setTimeout(r,ms));const until=async fn=>{for(let i=0;i<100;i++){if(fn())return;await wait(20);}throw Error('Timed out');};
+const card=(id,title)=>`<div class="stack-book-item"><div class="book-item-text"><a class="book-item-title font-fKts9tCXDjS49UhH" href="/page/${id}">${title}</a><div class="book-item-desc">作者：测试作者</div><div class="book-item-abstract">简介</div></div></div>`;
+const w=new JSDOM('<nav><div class="nav-item"><a href="/library">书库</a></div></nav><main class="muye-stack-book-list">'+Array.from({length:20},(_,i)=>card(100001+i,'普通书'+i)).join('')+'</main>',{url:'https://fanqienovel.com/library',runScripts:'outside-only'}).window;
+const values={'fq-infinite-enabled':false};w.GM_getValue=(k,d)=>values[k]??d;w.GM_setValue=async(k,v)=>{values[k]=structuredClone(v);};w.GM_listValues=()=>Object.keys(values);w.GM_registerMenuCommand=()=>{};w.fetch=async()=>{throw Error('offline');};
+let reads=0;const walk=w.document.createTreeWalker.bind(w.document);w.document.createTreeWalker=(...args)=>{reads++;return walk(...args);};
+(async()=>{try{
+ w.eval(source);await until(()=>w.document.querySelectorAll('.fq-choice-actions').length===20);await wait(180);
+ const sh=w.document.getElementById('fq-keyword-filter-host').shadowRoot,list=w.document.querySelector('main'),first=list.firstElementChild,title=first.querySelector('a'),intro=first.querySelector('.book-item-abstract');const hidden=()=>first.getAttribute('data-fq-keyword-blocked')==='hide';
+ const before=reads;sh.getElementById('reveal').click();sh.getElementById('reveal').click();assert.equal(reads,before,'unchanged cards are not decoded again');
+ list.insertAdjacentHTML('beforeend',card(200001,'原神新增'));await until(()=>values['fq-history-book-200001']);assert.equal(reads-before,3,'appending decodes only the new card fields');
+ title.firstChild.data='原神改名';await until(hidden);assert.equal(values['fq-history-book-100001'].title,'原神改名');
+ title.textContent='普通故事';await until(()=>!hidden());intro.textContent='崩铁题材';await until(hidden);
+ intro.textContent='普通简介';await until(()=>!hidden());
+ const {FONTS}=await import(require('node:url').pathToFileURL(path.join(root,'src/adapters/fanqie/font-map.mjs')).href);const index=FONTS.fKts9tCXDjS49UhH.indexOf('原');assert.ok(index>=0);
+ title.textContent=String.fromCodePoint(58344+index)+'神';await until(hidden);title.classList.remove('font-fKts9tCXDjS49UhH');await until(()=>!hidden());title.classList.add('font-fKts9tCXDjS49UhH');await until(hidden);
+ title.href='/page/300001';title.textContent='复用卡片新书';await until(()=>!hidden());first.querySelector('[data-choice=later]').click();await until(()=>values['fq-choice-300001']);assert.equal(values['fq-choice-300001'].title,'复用卡片新书','existing button handlers use refreshed metadata/id');
+ assert.equal(values['fq-choice-100001'],undefined);assert.ok(values['fq-history-book-100001']);assert.ok(values['fq-history-book-200001']);
+ console.log('PASS card cache: unchanged/new-only decoding, text/description/font/href invalidation, reused card handlers, history retention');
+}finally{w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

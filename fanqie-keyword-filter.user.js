@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.13.5
+// @version      1.13.6
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -60,7 +60,18 @@ function filterState(raw){
   const profile={id:'default',name:'默认方案',enabled:raw?.enabled!==false,abstract:raw?.abstract!==false,groups:[{id:'original',name:'原有词表',enabled:true,words}]};
   return {schema:2,revision:0,activeId:profile.id,profiles:[profile],words:profileWords(profile),enabled:profile.enabled,abstract:profile.abstract};
 }
-function compileFilterWords(words){const entries=words.map(word=>({word,key:filterNormalize(word)})).filter(e=>e.key);return fields=>{const texts=fields.map(filterNormalize);return entries.filter(e=>texts.some(text=>text.includes(e.key))).map(e=>e.word);};}
+function compileFilterWords(words){
+  // A word cannot occur unless its first code point occurs. Keep original order and overlaps.
+  const buckets=new Map();
+  words.forEach((word,index)=>{const key=filterNormalize(word);if(!key)return;const first=key.codePointAt(0);if(!buckets.has(first))buckets.set(first,[]);buckets.get(first).push({word,key,index});});
+  return fields=>{
+    const texts=fields.map(filterNormalize),seen=new Set(),matches=[];
+    for(const text of texts)for(const char of text){const first=char.codePointAt(0);if(seen.has(first))continue;seen.add(first);
+      for(const entry of buckets.get(first)||[])if(texts.some(value=>value.includes(entry.key)))matches.push(entry);
+    }
+    return matches.sort((a,b)=>a.index-b.index).map(entry=>entry.word);
+  };
+}
 
 // SOURCE: src/core/backup.mjs
 const BACKUP_FORMAT='fanqie-rebuild-backup',BACKUP_LIMIT=10*1024*1024;
@@ -583,7 +594,7 @@ function resetProfileEditor(){
   $('profile-delete').disabled=profileState.profiles.length<=1;$('profile-confirm').hidden=true;$('profile-delete-confirm').hidden=true;$('profile-latest').hidden=true;$('profile-message').textContent='';$('words').value='';
   renderGroupEditor();$('word-feedback').textContent='';
 }
-function applyProfileState(next){if(next.revision<profileState.revision)return;profileState=filterState(next);config={words:profileState.words,enabled:profileState.enabled,abstract:profileState.abstract};matchFilterWords=compileFilterWords(config.words);}
+function applyProfileState(next){if(next.revision<profileState.revision)return;profileState=filterState(next);const changed=JSON.stringify(config.words)!==JSON.stringify(profileState.words);config={words:profileState.words,enabled:profileState.enabled,abstract:profileState.abstract};if(changed)matchFilterWords=compileFilterWords(config.words);}
 async function persistProfiles(next,revision=profileState.revision){
   if(profileBusy)throw Error('正在保存，请稍后再试。');profileBusy=true;$('settings-view').inert=true;if(drawerReady)bq('bar').inert=true;
   try{
@@ -603,7 +614,7 @@ async function switchProfile(id,discard=false){
   if(!discard&&profileDirty()){
     pendingProfile=id;openDrawer('rules');$('profile-select').value=profileState.activeId;$('profile-confirm').hidden=false;$('profile-confirm-text').textContent='当前方案有未保存修改。切换前请选择：';return;
   }
-  try{const next=cloneProfile(profileState);next.activeId=id;await persistProfiles(next);resetWordDraft();$('profile-message').textContent='已切换方案，当前书流已重新筛选。';}
+  try{const next=cloneProfile(profileState);next.activeId=id;await persistProfiles(next);if(drawerRulesLoaded)resetWordDraft();$('profile-message').textContent='已切换方案，当前书流已重新筛选。';}
   catch(error){$('profile-message').textContent='切换失败：'+error.message;if(drawerReady)bq('error').textContent='切换失败：'+error.message;}
   finally{$('profile-select').value=profileState.activeId;if(drawerReady)bq('profile-quick').value=profileState.activeId;}
 }
@@ -769,22 +780,47 @@ $('reveal').onclick = () => { reveal = !reveal; scan(); };
 GM_registerMenuCommand('番茄小说：编辑屏蔽词', () => { if (supportedPage()) openPanel(); else alert('请在番茄小说的「书库」或「排行榜」页面设置屏蔽词。'); });
 
 // SOURCE: src/features/library/layout.js
-const observer = new MutationObserver(() => {
-  clearTimeout(timer);
-  timer = setTimeout(scan, 120);
+// Cache decoded metadata, while retaining each book object used by existing button handlers.
+const libraryBookCache=new WeakMap(),libraryGapCache=new WeakMap();let libraryTextEpoch=0,libraryLayoutEpoch=0;
+function invalidateLibraryCards(records){
+  for(const record of records){
+    const target=record.target.nodeType===1?record.target:record.target.parentElement;
+    const card=target?.closest?.(CARD);
+    if(card){const cached=libraryBookCache.get(card);if(cached)cached.dirty=true;if(record.type==='attributes'&&record.attributeName==='class')libraryLayoutEpoch++;}
+    else if(record.type==='attributes'&&target?.querySelector?.(CARD)){libraryTextEpoch++;libraryLayoutEpoch++;}
+  }
+}
+function libraryBook(card){
+  let cached=libraryBookCache.get(card);
+  if(cached&&!cached.dirty&&cached.epoch===libraryTextEpoch)return cached.book;
+  if(!cached){cached={book:{}};libraryBookCache.set(card,cached);}
+  const link=card.querySelector('a[href*="/page/"]');
+  Object.assign(cached.book,{id:link?.getAttribute('href')?.match(/\/page\/(\d+)/)?.[1],title:readText(card.querySelector(TITLE)),abstract:readText(card.querySelector(ABSTRACT)),author:readText(card.querySelector('.book-item-text > .author,.book-item-text > .book-item-desc')).replace(/^作者[：:]\s*/,'')});
+  cached.dirty=false;cached.epoch=libraryTextEpoch;return cached.book;
+}
+const observer = new MutationObserver(records => {
+  invalidateLibraryCards(records);clearTimeout(timer);timer=setTimeout(scan,120);
 });
-const observe = () => observer.observe(document.body, {subtree:true, childList:true, characterData:true, attributes:true, attributeFilter:['class']});
-function alignLibraryCards() {
-  for (const list of document.querySelectorAll('.muye-stack-book-list')) {
-    // nth-child spacing counts hidden books too. Let flex gap space only the
-    // visible cards, preserving native widths, wrapping, and vertical margins.
-    list.removeAttribute(LAYOUT);
-    list.style.removeProperty('--fq-column-gap');
-    const cards = [...list.children].filter(child=>child.matches('.stack-book-item'));
-    if (!cards.some(card=>card.getAttribute(MARK)==='hide')) continue;
-    const gap = Math.max(0,...cards.map(card=>parseFloat(getComputedStyle(card).marginRight)||0));
-    list.style.setProperty('--fq-column-gap',gap+'px');
-    list.setAttribute(LAYOUT,'aligned');
+const observe=()=>observer.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['class','href']});
+window.addEventListener('resize',()=>{clearTimeout(timer);timer=setTimeout(scan,120);});
+function alignLibraryCards(){
+  for(const list of document.querySelectorAll('.muye-stack-book-list')){
+    if(list.hasAttribute('data-fq-native-hidden'))continue;
+    const cards=[...list.children].filter(child=>child.matches('.stack-book-item'));
+    if(!cards.some(card=>card.getAttribute(MARK)==='hide')){
+      if(list.hasAttribute(LAYOUT)){list.removeAttribute(LAYOUT);list.style.removeProperty('--fq-column-gap');}
+      continue;
+    }
+    const width=innerWidth,boxWidth=list.clientWidth,cached=libraryGapCache.get(list);
+    if(!cached||cached.width!==width||cached.boxWidth!==boxWidth||cached.epoch!==libraryLayoutEpoch){
+      // The native layout repeats nth-child spacing. Sample its first four rows, not every book.
+      list.removeAttribute(LAYOUT);list.style.removeProperty('--fq-column-gap');
+      const gap=Math.max(0,...cards.slice(0,12).map(card=>parseFloat(getComputedStyle(card).marginRight)||0));
+      libraryGapCache.set(list,{width,boxWidth,epoch:libraryLayoutEpoch,gap});
+    }
+    const gap=libraryGapCache.get(list).gap+'px';
+    if(list.style.getPropertyValue('--fq-column-gap')!==gap)list.style.setProperty('--fq-column-gap',gap);
+    if(!list.hasAttribute(LAYOUT))list.setAttribute(LAYOUT,'aligned');
   }
 }
 
@@ -1229,9 +1265,9 @@ introRoot.addEventListener('keydown',e=>{
 window.addEventListener('scroll',()=>{if(intro)closeIntro(false);},{passive:true});window.addEventListener('resize',positionIntro);
 
 // SOURCE: src/features/choices/bindings.js
-function attachChoices(card){
-  const link=card.querySelector('a[href*="/page/"]'),id=link?.getAttribute('href')?.match(/\/page\/(\d+)/)?.[1];if(!id)return;
-  const book={id,title:readText(card.querySelector(TITLE)),abstract:readText(card.querySelector(ABSTRACT)),author:readText(card.querySelector('.book-item-text > .author,.book-item-text > .book-item-desc')).replace(/^作者[：:]\s*/,'')};
+const choicePaintState=new WeakMap();
+function attachChoices(card,book=libraryBook(card)){
+  const id=book.id;if(!id)return;
   if(!wiredChoices.has(card)){card.querySelectorAll('.fq-choice-actions').forEach(e=>e.remove());const controls=document.createElement('div');controls.className='fq-choice-actions';controls.style.cssText='font:12px/1.5 system-ui;clear:both;padding:6px 0;position:relative';const badge=document.createElement('span');badge.className='fq-choice-state';controls.append(badge);choiceButtons(book,controls);if(card.matches('.stack-book-item')){card.classList.add('fq-intro-card');card.append(controls);
     const text=card.querySelector('.book-item-text');
     if(text){text.classList.add('fq-intro-hitarea');text.tabIndex=0;text.setAttribute('role','group');text.setAttribute('aria-label','书籍信息，点击或按回车查看完整简介');text.setAttribute('aria-haspopup','dialog');text.setAttribute('aria-expanded','false');text.onclick=e=>{
@@ -1239,8 +1275,12 @@ function attachChoices(card){
       e.preventDefault();e.stopPropagation();if(intro?.card!==card)openIntro(card,text);
     };text.onkeydown=e=>{if(e.target===text&&(e.key==='Enter'||e.key===' ')){e.preventDefault();e.stopPropagation();openIntro(card,text);}};}
     }else (card.querySelector('.book-item-text')||card).append(controls);wiredChoices.add(card);}
+  const paintState=(choices.get(id)?.state||'none')+'|'+id;
+  if(choicePaintState.get(card)!==paintState){
+  choicePaintState.set(card,paintState);
   const badge=card.querySelector('.fq-choice-state'),text=stateLabel(choices.get(id)?.state);if(badge.textContent!==text)badge.textContent=text;
   if(card.matches('.stack-book-item')){const state=choices.get(id)?.state||'none';const clear=card.querySelector('[data-choice=none]');clear.hidden=state==='none';clear.textContent='清除';const later=card.querySelector('[data-choice=later]');later.textContent=state==='later'?'已候选':'候选';later.setAttribute('aria-pressed',String(state==='later'));}
+  }
   if(intro?.book.id===id)updateIntroState();
   return id;
 }
@@ -1252,8 +1292,9 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshCho
 let detailKey='';setInterval(()=>{const key=location.pathname+'|'+(document.querySelector('h1')?.textContent||'');if(key!==detailKey){detailKey=key;renderChoices();}},700);
 
 // SOURCE: src/features/library/filter.js
+const libraryMatchCache=new WeakMap();
 function scan() {
-  observer.disconnect();
+  invalidateLibraryCards(observer.takeRecords());observer.disconnect();
   try {
     const active = supportedPage();
     host.hidden = drawerReady?false:!active;
@@ -1268,23 +1309,27 @@ function scan() {
     let hits = 0, unknown = 0;
     const records = [];
     for (const card of cards) {
-      const fields = [readText(card.querySelector(TITLE))];
-      if (config.abstract) fields.push(readText(card.querySelector(ABSTRACT)));
+      const book=libraryBook(card),fields=[book.title];
+      if(config.abstract)fields.push(book.abstract);
       if (fields.some(text => /[\ue000-\uf8ff]/u.test(text))) unknown++;
-      const idForChoice=attachChoices(card);
-      const matches=config.enabled?matchFilterWords(fields):[];
+      const idForChoice=attachChoices(card,book);
+      let matches=[];
+      if(config.enabled){
+        const cached=libraryMatchCache.get(card);
+        if(cached&&cached.matcher===matchFilterWords&&cached.abstract===config.abstract&&cached.title===book.title&&cached.description===book.abstract)matches=cached.matches;
+        else{matches=matchFilterWords(fields);libraryMatchCache.set(card,{matcher:matchFilterWords,abstract:config.abstract,title:book.title,description:book.abstract,matches});}
+      }
       const keywordHit = matches.length>0;
       const hit=keywordHit||choices.get(idForChoice)?.state==='skip';
       if (hit) {
-        hits++; card.setAttribute(MARK, reveal ? 'show' : 'hide');
-        const bookLink = card.querySelector('a[href*="/page/"]');
-        const id = bookLink?.getAttribute('href')?.match(/\/page\/(\d+)(?:[/?#]|$)/)?.[1];
+        hits++;const mark=reveal?'show':'hide';if(card.getAttribute(MARK)!==mark)card.setAttribute(MARK,mark);
+        const id=book.id;
         if (id && keywordHit) {
-          const author = readText(card.querySelector('.book-item-text > .author, .book-item-text > .book-item-desc')).replace(/^作者\s*[：:]\s*/,'').trim();
+          const author=book.author.trim();
           records.push({id,title:fields[0].trim() || '书籍 '+id,author,matches});
         }
       }
-      else card.removeAttribute(MARK);
+      else if(card.hasAttribute(MARK))card.removeAttribute(MARK);
     }
     alignLibraryCards();
     $('open').textContent = config.enabled ? `关键词屏蔽 · ${hits} 本` : '关键词屏蔽 · 已暂停';

@@ -26,6 +26,17 @@ function filterState(raw){
   const profile={id:'default',name:'默认方案',enabled:raw?.enabled!==false,abstract:raw?.abstract!==false,groups:[{id:'original',name:'原有词表',enabled:true,words}]};
   return {schema:2,revision:0,activeId:profile.id,profiles:[profile],words:profileWords(profile),enabled:profile.enabled,abstract:profile.abstract};
 }
-function compileFilterWords(words){const entries=words.map(word=>({word,key:filterNormalize(word)})).filter(e=>e.key);return fields=>{const texts=fields.map(filterNormalize);return entries.filter(e=>texts.some(text=>text.includes(e.key))).map(e=>e.word);};}
+function compileFilterWords(words){
+  // A word cannot occur unless its first code point occurs. Keep original order and overlaps.
+  const buckets=new Map();
+  words.forEach((word,index)=>{const key=filterNormalize(word);if(!key)return;const first=key.codePointAt(0);if(!buckets.has(first))buckets.set(first,[]);buckets.get(first).push({word,key,index});});
+  return fields=>{
+    const texts=fields.map(filterNormalize),seen=new Set(),matches=[];
+    for(const text of texts)for(const char of text){const first=char.codePointAt(0);if(seen.has(first))continue;seen.add(first);
+      for(const entry of buckets.get(first)||[])if(texts.some(value=>value.includes(entry.key)))matches.push(entry);
+    }
+    return matches.sort((a,b)=>a.index-b.index).map(entry=>entry.word);
+  };
+}
 
 export { filterNormalize, profileWords, filterState, compileFilterWords };

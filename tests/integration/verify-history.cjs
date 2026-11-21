@@ -29,7 +29,7 @@ function page(title='原神：旅途',id='1234567890123456789') {
 const shadow=w=>w.document.getElementById('fq-keyword-filter-host').shadowRoot;
 const records=()=>Object.entries(values).filter(([key])=>key.startsWith('fq-history-book-')).map(([,row])=>row);
 (async()=>{
-  const a=page(), b=page(); await wait(280);
+  const a=page(), b=page(); for(let i=0;i<100&&records().length<1;i++)await wait(20);await wait(30);
   assert.equal(records().length,1,'two tabs deduplicate');
   assert.equal(records()[0].author,'测试作者');
   const firstSeen=records()[0].firstSeen;
