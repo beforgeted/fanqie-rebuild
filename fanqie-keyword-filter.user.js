@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.13.6
+// @version      1.13.7
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -146,8 +146,21 @@ function backupPlan(all,raw,decisions={}){
   }
   return {patch,conflicts,counts:{profiles:incoming.settings.profiles.length,choices:incoming.choices.length,history:incoming.history.length},changed:Object.keys(patch).length};
 }
+function backupParts(all){
+  const base={};for(const key of ['fq-keyword-filter-v1','fq-infinite-enabled'])if(Object.hasOwn(all,key))base[key]=all[key];
+  const packs=[];let chunk={...base},size=JSON.stringify(base).length*3;
+  for(const [key,row] of Object.entries(all)){if(!key.startsWith('fq-choice-')&&!key.startsWith('fq-history-book-'))continue;
+    const n=JSON.stringify(row).length*3+key.length;
+    if(size+n>4*1024*1024){packs.push(backupFromStorage(chunk));chunk={...base};size=JSON.stringify(base).length*3;}
+    chunk[key]=row;size+=n;
+  }
+  packs.push(backupFromStorage(chunk));
+  for(const pack of packs)if(new TextEncoder().encode(JSON.stringify(pack)).length>BACKUP_LIMIT)throw Error('单份设置超过备份上限，未清理任何数据');
+  return packs;
+}
 async function backupOperation(storage,message){
   const all=await storage.all();
+  if(message.action==='backupParts')return backupParts(all);
   if(message.action==='backupExport')return backupFromStorage(all);
   if(!storage.atomicBackup)throw Error('导入目前支持 Chrome／Edge 扩展版，请使用扩展安装包。');
   const plan=backupPlan(all,message.pack,message.decisions||{});
@@ -156,11 +169,40 @@ async function backupOperation(storage,message){
   return {ok:true,counts:plan.counts,changed:plan.changed,infiniteEnabled:plan.patch['fq-infinite-enabled']??(all['fq-infinite-enabled']!==false)};
 }
 
+// SOURCE: src/core/cleanup.mjs
+function cleanupPreview(all, options={}, now=Date.now()) {
+  const days=Number(options.days??90);if(![0,30,90,180].includes(days))throw Error('无效清理范围');
+  const rows=[];let protectedCount=0;
+  for(const [key,row] of Object.entries(all)){
+    if(!row||!/^\d{5,25}$/.test(row.id||'')||key!=='fq-history-book-'+row.id)continue;
+    const choice=all['fq-choice-'+row.id];
+    if(choice&&(['later','skip'].includes(choice.state)||String(choice.note||'').trim())){protectedCount++;continue;}
+    if(!Number.isSafeInteger(row.lastSeen)||row.lastSeen<=0||row.lastSeen>now)continue;
+    if(days&&row.lastSeen>=now-days*86400000)continue;
+    if(options.handledOnly&&!row.handledAt)continue;
+    rows.push({id:row.id,title:row.title,signature:JSON.stringify(row)});
+  }
+  return {rows,protectedCount,options:{days,handledOnly:!!options.handledOnly}};
+}
+async function cleanupOperation(storage,message){
+  if(!storage.remove||!storage.atomicBackup)throw Error('请使用 Chrome／Edge 扩展版进行安全清理');
+  const all=await storage.all(),plan=cleanupPreview(all,message.options);
+  if(message.action==='cleanupPreview')return plan;
+  if(!Array.isArray(message.rows)||message.rows.length>50000)throw Error('请重新预览');
+  const eligible=new Map(plan.rows.map(r=>[r.id,r.signature]));let removed=0,skipped=0,failed=0;
+  for(const row of new Map(message.rows.map(r=>[r.id,r])).values()){
+    if(!eligible.has(row.id)||eligible.get(row.id)!==row.signature){skipped++;continue;}
+    try{await storage.remove('fq-history-book-'+row.id);removed++;}catch{failed++;}
+  }
+  return {removed,skipped,failed};
+}
+
 // SOURCE: src/core/storage-operations.mjs
 // Shared with the extension service worker. Each book has its own key; writes
 // are serialized by the caller so records/handled marks survive tab races.
 async function historyOperation(storage, message) {
-  if(message.action==='backupExport'||message.action==='backupImport')return backupOperation(storage,message);
+  if(['cleanupPreview','cleanupCommit'].includes(message.action))return cleanupOperation(storage,message);
+  if(message.action==='backupParts'||message.action==='backupExport'||message.action==='backupImport')return backupOperation(storage,message);
   if(message.action==='filterRead'||message.action==='filterSave'){
     const key='fq-keyword-filter-v1',state=filterState(await storage.get(key));
     if(message.action==='filterRead')return state;
@@ -1726,6 +1768,32 @@ $('backup-export').onclick=async()=>{
 };
 function applyInfinitePreference(value){if(typeof value!=='boolean'||value===infiniteEnabled)return;infiniteEnabled=value;toggle.checked=value;disposeStream();syncStream();scan();}
 if(typeof FQ_PREF_WATCH==='function')FQ_PREF_WATCH(applyInfinitePreference);
+
+// SOURCE: src/features/backup/cleanup.js
+const cleanupSection=document.createElement('section');cleanupSection.style.cssText='border-top:1px solid #eadfd6;margin-top:24px;padding-top:20px';
+cleanupSection.innerHTML='<h3>清理屏蔽记录</h3><p>候选、不想看、备注和屏蔽词始终保留。不会修改官方书架。</p><div class="backup-actions"><select id="cleanup-days" aria-label="清理时间范围"><option value="90">90 天未再次遇到</option><option value="30">30 天未再次遇到</option><option value="180">180 天未再次遇到</option><option value="0">全部可清理记录</option></select><label><input type="checkbox" id="cleanup-handled">只清理我已处理的记录</label><button id="cleanup-preview">预览</button></div><p id="cleanup-status" role="status"></p><details id="cleanup-details" hidden><summary>查看可清理书籍</summary><ul id="cleanup-list" style="max-height:180px;overflow:auto"></ul></details><div id="cleanup-downloads" class="backup-actions"></div><label id="cleanup-ack-row" hidden><input type="checkbox" id="cleanup-ack">我已保存全部备份文件</label><div class="backup-actions"><button id="cleanup-confirm" hidden disabled>确认清理</button></div>';
+backupView.append(cleanupSection);
+let cleanupPlan=null,cleanupBusy=false,cleanupUrls=[];
+function cleanupReset(){cleanupPlan=null;for(const url of cleanupUrls)URL.revokeObjectURL(url);cleanupUrls=[];$('cleanup-downloads').replaceChildren();$('cleanup-details').hidden=true;$('cleanup-ack-row').hidden=true;$('cleanup-ack').checked=false;$('cleanup-confirm').hidden=true;$('cleanup-confirm').disabled=true;}
+function cleanupLock(value){cleanupBusy=value;for(const id of ['cleanup-days','cleanup-handled','cleanup-preview'])$(id).disabled=value;}
+$('cleanup-days').onchange=$('cleanup-handled').onchange=()=>{cleanupReset();$('cleanup-status').textContent='条件已改变，请重新预览。';};
+$('cleanup-preview').onclick=async()=>{
+ if(cleanupBusy)return;cleanupReset();cleanupLock(true);$('cleanup-status').textContent='正在核对记录并准备备份…';
+ try{const options={days:Number($('cleanup-days').value),handledOnly:$('cleanup-handled').checked};const plan=await historyCall({action:'cleanupPreview',options});
+ $('cleanup-status').textContent='可清理 '+plan.rows.length+' 条，受保护 '+plan.protectedCount+' 条。';if(!plan.rows.length)return;
+ const packs=await historyCall({action:'backupParts'});cleanupPlan=plan;
+ $('cleanup-list').replaceChildren(...plan.rows.map(row=>{const li=document.createElement('li');li.textContent=row.title;return li;}));$('cleanup-details').hidden=false;
+ packs.forEach((pack,i)=>{const url=URL.createObjectURL(new Blob([JSON.stringify(pack)],{type:'application/json'}));cleanupUrls.push(url);const a=document.createElement('a');a.href=url;a.download='番茄清理前备份-'+new Date().toISOString().slice(0,10)+'-'+(i+1)+'.json';a.textContent='下载备份 '+(i+1)+' / '+packs.length;a.onclick=()=>{a.dataset.downloaded='true';};$('cleanup-downloads').append(a);});
+ $('cleanup-ack-row').hidden=false;$('cleanup-confirm').hidden=false;
+ }catch(error){cleanupReset();$('cleanup-status').textContent='无法准备清理：'+error.message;}finally{cleanupLock(false);}
+};
+$('cleanup-ack').onchange=()=>{$('cleanup-confirm').disabled=!$('cleanup-ack').checked||[...$('cleanup-downloads').children].some(a=>!a.dataset.downloaded);if($('cleanup-ack').checked&&$('cleanup-confirm').disabled){$('cleanup-ack').checked=false;$('cleanup-status').textContent='请先逐个下载并保存全部备份。';}};
+$('cleanup-confirm').onclick=async()=>{if(cleanupBusy||!cleanupPlan||!$('cleanup-ack').checked)return;cleanupLock(true);$('cleanup-confirm').disabled=true;
+ try{const result=await historyCall({action:'cleanupCommit',...cleanupPlan});cleanupReset();$('cleanup-status').textContent='已清理 '+result.removed+' 条，因变化跳过 '+result.skipped+' 条，失败 '+result.failed+' 条。'+(result.failed?'请重新预览后重试。':'需要恢复时可导入刚才的备份。');if(historyView)await refreshHistory();}
+ catch(error){$('cleanup-status').textContent='清理未完成，请重新预览核对后重试。'+error.message;cleanupReset();}finally{cleanupLock(false);}
+};
+let cleanupHistoryTimer;
+if(typeof FQ_HISTORY_WATCH==='function')FQ_HISTORY_WATCH(()=>{clearTimeout(cleanupHistoryTimer);cleanupHistoryTimer=setTimeout(()=>{if(historyView)refreshHistory();},150);});
 
 // SOURCE: src/features/shell/selection-page.js
 // One page shell is shared by home, library and shelf entries.

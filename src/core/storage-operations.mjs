@@ -1,10 +1,12 @@
+import { cleanupOperation } from './cleanup.mjs';
 import { filterState } from './filters.mjs';
 import { backupOperation } from './backup.mjs';
 
 // Shared with the extension service worker. Each book has its own key; writes
 // are serialized by the caller so records/handled marks survive tab races.
 async function historyOperation(storage, message) {
-  if(message.action==='backupExport'||message.action==='backupImport')return backupOperation(storage,message);
+  if(['cleanupPreview','cleanupCommit'].includes(message.action))return cleanupOperation(storage,message);
+  if(message.action==='backupParts'||message.action==='backupExport'||message.action==='backupImport')return backupOperation(storage,message);
   if(message.action==='filterRead'||message.action==='filterSave'){
     const key='fq-keyword-filter-v1',state=filterState(await storage.get(key));
     if(message.action==='filterRead')return state;

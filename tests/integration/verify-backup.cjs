@@ -5,7 +5,8 @@ const until=async fn=>{for(let i=0;i<100;i++){if(fn())return;await wait(20);}thr
 function backend(initial={}){
  const values=clone(initial);let listener,fail=false;const watches=[];
  const storage={async get(k){return clone(k===null?values:typeof k==='string'?{[k]:values[k]}:Object.fromEntries(k.filter(x=>values[x]!==undefined).map(x=>[x,values[x]])));},async set(patch){if(fail)throw Error('测试存储失败');const changes={};for(const [k,v]of Object.entries(patch)){changes[k]={oldValue:values[k],newValue:clone(v)};values[k]=clone(v);}for(const fn of watches)fn(changes,'local');}};
- const context=vm.createContext({URL,chrome:{runtime:{id:'test',onMessage:{addListener:f=>listener=f}},storage:{local:storage}}});context.importScripts=f=>vm.runInContext(fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/chrome-extension/'+f,'utf8'),context);vm.runInContext(fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/src/platform/chrome/background.js','utf8'),context);
+ storage.remove=async key=>{if(fail)throw Error("测试删除失败");delete values[key];for(const fn of watches)fn({[key]:{newValue:undefined}},"local");};
+ const context=vm.createContext({URL,TextEncoder,chrome:{runtime:{id:'test',onMessage:{addListener:f=>listener=f}},storage:{local:storage}}});context.importScripts=f=>vm.runInContext(fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/chrome-extension/'+f,'utf8'),context);vm.runInContext(fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/src/platform/chrome/background.js','utf8'),context);
  return {values,storage,watches,context,set fail(v){fail=v;},send:message=>new Promise(resolve=>listener({channel:'fq-filter-history',...message},{id:'test',url:'https://fanqienovel.com/library?fq_view=selection#backup'},resolve))};
 }
 const key='fq-keyword-filter-v1',choice={id:'123456',title:'迁移测试书',author:'作者',state:'later',note:'想看设定',noteRevision:3,updatedAt:100,noteUpdatedAt:90};
@@ -45,5 +46,15 @@ const windows=[];
  await s.getElementById('backup-export').onclick();assert.equal(JSON.parse(await w.exportBlob.text()).data.choices[0].note,choice.note);
  const modified=clone(pack);modified.data.choices[0].note='备份新备注';drop(JSON.stringify(modified));await until(()=>!s.getElementById('backup-conflicts').hidden);s.getElementById('backup-cancel').click();assert.equal(uiStore.values['fq-choice-123456'].note,choice.note);
  drop(JSON.stringify(modified));await until(()=>!s.getElementById('backup-conflicts').hidden);s.getElementById('backup-all-file').click();await s.getElementById('backup-confirm').onclick();assert.equal(uiStore.values['fq-choice-123456'].note,'备份新备注');
+
+ // Real cleanup controls: preview alone never deletes; requires downloaded backup acknowledgement.
+ const historyKey='fq-history-book-345678';const protectedKey='fq-history-book-123456';uiStore.values[protectedKey]={...uiStore.values[historyKey],id:'123456',title:'有备注的候选'};
+ await s.getElementById('cleanup-preview').onclick();assert.equal(uiStore.values[historyKey].id,'345678');assert.equal(s.getElementById('cleanup-confirm').disabled,true);
+ assert.equal(s.getElementById('cleanup-downloads').children.length,1);assert.match(s.getElementById('cleanup-status').textContent,/受保护 1/);
+ s.getElementById('cleanup-ack').checked=true;s.getElementById('cleanup-ack').onchange();assert.equal(s.getElementById('cleanup-confirm').disabled,true);
+ s.getElementById('cleanup-downloads').firstChild.onclick();s.getElementById('cleanup-ack').checked=true;s.getElementById('cleanup-ack').onchange();assert.equal(s.getElementById('cleanup-confirm').disabled,false);
+ const saved=JSON.parse(await w.exportBlob.text());await s.getElementById('cleanup-confirm').onclick();assert.equal(uiStore.values[historyKey],undefined);assert.ok(uiStore.values[protectedKey]);assert.equal(uiStore.values['fq-choice-123456'].note,'备份新备注');
+ assert.match(s.getElementById('cleanup-status').textContent,/已清理 1 条/);drop(JSON.stringify(saved));await until(()=>!!uiStore.values[historyKey]);assert.ok(uiStore.values[historyKey]);
+ console.log('PASS cleanup UI: backup acknowledgement, protected rows, deletion and restore');
  console.log('PASS backup: portable roundtrip, whitelist, validation, idempotency, profile-copy dedup, conflict choices/races, atomic failure, history merge, drag/drop, export and cancellation');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>windows.forEach(w=>w.close()));

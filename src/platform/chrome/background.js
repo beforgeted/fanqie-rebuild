@@ -2,6 +2,7 @@
 importScripts('history-core.js');
 const historyStorage = {
   atomicBackup: true,
+  remove: key => chrome.storage.local.remove(key),
   all: () => chrome.storage.local.get(null),
   get: async key => (await chrome.storage.local.get(key))[key],
   set: values => chrome.storage.local.set(values)

@@ -72,8 +72,21 @@ function backupPlan(all,raw,decisions={}){
   }
   return {patch,conflicts,counts:{profiles:incoming.settings.profiles.length,choices:incoming.choices.length,history:incoming.history.length},changed:Object.keys(patch).length};
 }
+function backupParts(all){
+  const base={};for(const key of ['fq-keyword-filter-v1','fq-infinite-enabled'])if(Object.hasOwn(all,key))base[key]=all[key];
+  const packs=[];let chunk={...base},size=JSON.stringify(base).length*3;
+  for(const [key,row] of Object.entries(all)){if(!key.startsWith('fq-choice-')&&!key.startsWith('fq-history-book-'))continue;
+    const n=JSON.stringify(row).length*3+key.length;
+    if(size+n>4*1024*1024){packs.push(backupFromStorage(chunk));chunk={...base};size=JSON.stringify(base).length*3;}
+    chunk[key]=row;size+=n;
+  }
+  packs.push(backupFromStorage(chunk));
+  for(const pack of packs)if(new TextEncoder().encode(JSON.stringify(pack)).length>BACKUP_LIMIT)throw Error('单份设置超过备份上限，未清理任何数据');
+  return packs;
+}
 async function backupOperation(storage,message){
   const all=await storage.all();
+  if(message.action==='backupParts')return backupParts(all);
   if(message.action==='backupExport')return backupFromStorage(all);
   if(!storage.atomicBackup)throw Error('导入目前支持 Chrome／Edge 扩展版，请使用扩展安装包。');
   const plan=backupPlan(all,message.pack,message.decisions||{});
@@ -82,4 +95,4 @@ async function backupOperation(storage,message){
   return {ok:true,counts:plan.counts,changed:plan.changed,infiniteEnabled:plan.patch['fq-infinite-enabled']??(all['fq-infinite-enabled']!==false)};
 }
 
-export { BACKUP_FORMAT, BACKUP_LIMIT, backupClean, backupFromStorage, backupPlan, backupOperation };
+export { backupParts, BACKUP_FORMAT, BACKUP_LIMIT, backupClean, backupFromStorage, backupPlan, backupOperation };

@@ -115,8 +115,21 @@ function backupPlan(all,raw,decisions={}){
   }
   return {patch,conflicts,counts:{profiles:incoming.settings.profiles.length,choices:incoming.choices.length,history:incoming.history.length},changed:Object.keys(patch).length};
 }
+function backupParts(all){
+  const base={};for(const key of ['fq-keyword-filter-v1','fq-infinite-enabled'])if(Object.hasOwn(all,key))base[key]=all[key];
+  const packs=[];let chunk={...base},size=JSON.stringify(base).length*3;
+  for(const [key,row] of Object.entries(all)){if(!key.startsWith('fq-choice-')&&!key.startsWith('fq-history-book-'))continue;
+    const n=JSON.stringify(row).length*3+key.length;
+    if(size+n>4*1024*1024){packs.push(backupFromStorage(chunk));chunk={...base};size=JSON.stringify(base).length*3;}
+    chunk[key]=row;size+=n;
+  }
+  packs.push(backupFromStorage(chunk));
+  for(const pack of packs)if(new TextEncoder().encode(JSON.stringify(pack)).length>BACKUP_LIMIT)throw Error('单份设置超过备份上限，未清理任何数据');
+  return packs;
+}
 async function backupOperation(storage,message){
   const all=await storage.all();
+  if(message.action==='backupParts')return backupParts(all);
   if(message.action==='backupExport')return backupFromStorage(all);
   if(!storage.atomicBackup)throw Error('导入目前支持 Chrome／Edge 扩展版，请使用扩展安装包。');
   const plan=backupPlan(all,message.pack,message.decisions||{});
@@ -125,11 +138,40 @@ async function backupOperation(storage,message){
   return {ok:true,counts:plan.counts,changed:plan.changed,infiniteEnabled:plan.patch['fq-infinite-enabled']??(all['fq-infinite-enabled']!==false)};
 }
 
+// SOURCE: src/core/cleanup.mjs
+function cleanupPreview(all, options={}, now=Date.now()) {
+  const days=Number(options.days??90);if(![0,30,90,180].includes(days))throw Error('无效清理范围');
+  const rows=[];let protectedCount=0;
+  for(const [key,row] of Object.entries(all)){
+    if(!row||!/^\d{5,25}$/.test(row.id||'')||key!=='fq-history-book-'+row.id)continue;
+    const choice=all['fq-choice-'+row.id];
+    if(choice&&(['later','skip'].includes(choice.state)||String(choice.note||'').trim())){protectedCount++;continue;}
+    if(!Number.isSafeInteger(row.lastSeen)||row.lastSeen<=0||row.lastSeen>now)continue;
+    if(days&&row.lastSeen>=now-days*86400000)continue;
+    if(options.handledOnly&&!row.handledAt)continue;
+    rows.push({id:row.id,title:row.title,signature:JSON.stringify(row)});
+  }
+  return {rows,protectedCount,options:{days,handledOnly:!!options.handledOnly}};
+}
+async function cleanupOperation(storage,message){
+  if(!storage.remove||!storage.atomicBackup)throw Error('请使用 Chrome／Edge 扩展版进行安全清理');
+  const all=await storage.all(),plan=cleanupPreview(all,message.options);
+  if(message.action==='cleanupPreview')return plan;
+  if(!Array.isArray(message.rows)||message.rows.length>50000)throw Error('请重新预览');
+  const eligible=new Map(plan.rows.map(r=>[r.id,r.signature]));let removed=0,skipped=0,failed=0;
+  for(const row of new Map(message.rows.map(r=>[r.id,r])).values()){
+    if(!eligible.has(row.id)||eligible.get(row.id)!==row.signature){skipped++;continue;}
+    try{await storage.remove('fq-history-book-'+row.id);removed++;}catch{failed++;}
+  }
+  return {removed,skipped,failed};
+}
+
 // SOURCE: src/core/storage-operations.mjs
 // Shared with the extension service worker. Each book has its own key; writes
 // are serialized by the caller so records/handled marks survive tab races.
 async function historyOperation(storage, message) {
-  if(message.action==='backupExport'||message.action==='backupImport')return backupOperation(storage,message);
+  if(['cleanupPreview','cleanupCommit'].includes(message.action))return cleanupOperation(storage,message);
+  if(message.action==='backupParts'||message.action==='backupExport'||message.action==='backupImport')return backupOperation(storage,message);
   if(message.action==='filterRead'||message.action==='filterSave'){
     const key='fq-keyword-filter-v1',state=filterState(await storage.get(key));
     if(message.action==='filterRead')return state;
