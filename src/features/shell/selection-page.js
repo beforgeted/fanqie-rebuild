@@ -7,15 +7,15 @@ const originalNavTarget=navLink.target;
 const selectionStyles=document.createElement('style');
 selectionStyles.textContent=`
   body[data-fq-selection-page] .muye-stack,body[data-fq-selection-page] [data-fq-selection-native],body[data-fq-selection-page] .muye-footer,body[data-fq-selection-page] .zone-footer,body[data-fq-selection-page] .float-wrapper{display:none!important}
-  body[data-fq-selection-page] .muye-library{padding-top:80px;display:flow-root}
+  body[data-fq-selection-page] .muye-library{padding-top:80px;display:flow-root;min-width:0;width:100%}
   #fq-selection-nav>a{white-space:nowrap;text-decoration:none}
-  body[data-fq-selection-page]>.muye-header~#fq-drawer,body[data-fq-selection-page] #fq-drawer[data-native-host=bookshelf]{margin-top:100px}
-  #fq-drawer[data-selection-page=true]{position:relative;inset:auto;z-index:auto;display:block;background:#fff;width:min(1440px,calc(100% - 64px));height:calc(100dvh - var(--fq-page-top,100px) - 20px);min-height:420px;margin:20px auto 0;font-family:inherit;box-sizing:border-box}
+  body[data-fq-selection-page]>.muye-header~#fq-drawer,body[data-fq-selection-page] #fq-drawer[data-native-host=bookshelf]{margin-top:88px}
+  #fq-drawer[data-selection-page=true]{position:relative;inset:auto;z-index:auto;display:block;background:#fff;width:min(1440px,calc(100% - 64px));height:calc(100dvh - var(--fq-page-top,88px) - 12px);min-height:420px;margin:8px auto 0;font-family:inherit;box-sizing:border-box}
   #fq-drawer[data-selection-page=true] #fq-drawer-dialog{position:static;transform:none;width:100%;height:100%;max-height:none;border-radius:0;box-shadow:none;overflow:hidden}
-  #fq-drawer[data-selection-page=true] #fq-drawer-head{padding:0;gap:26px;min-height:55px}
-  #fq-drawer[data-selection-page=true] #fq-drawer-title{font-size:22px;font-weight:600;letter-spacing:.5px}
-  #fq-drawer[data-selection-page=true] #fq-drawer-tabs{flex:1;gap:12px}
-  #fq-drawer[data-selection-page=true] #fq-drawer-tabs button{font-size:15px;padding:12px 8px}
+  #fq-drawer[data-selection-page=true] #fq-drawer-head{padding:0;gap:12px;min-height:46px}
+  #fq-drawer[data-selection-page=true] #fq-drawer-title{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  #fq-drawer[data-selection-page=true] #fq-drawer-tabs{flex:0 0 auto;gap:12px}
+  #fq-drawer[data-selection-page=true] #fq-drawer-tabs button{font-size:14px;padding:10px 8px}
   #fq-drawer[data-selection-page=true] #fq-drawer-close{display:none}
   #fq-drawer[data-selection-page=true] #fq-drawer-body{padding:0;flex:1;min-height:0;display:flex;overflow:hidden}
   #fq-drawer[data-selection-page=true] #fq-choice-host{height:100%;min-height:0}
@@ -31,12 +31,19 @@ selectionStyles.textContent=`
   #fq-drawer:not([data-selection-page=true]) #fq-drawer-tabs button{padding:8px 0}
   #fq-drawer:not([data-selection-page=true]) #fq-drawer-body{padding:0 20px 16px;flex:1;scrollbar-gutter:stable;scroll-padding-bottom:90px}
   #fq-drawer button[hidden]{display:none!important}
-  @media(max-width:760px){#fq-drawer[data-selection-page=true]{width:calc(100% - 24px);margin-top:12px;min-height:420px}#fq-drawer[data-selection-page=true] #fq-drawer-head{gap:12px}#fq-drawer[data-selection-page=true] #fq-drawer-title{font-size:18px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs{gap:4px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs button{font-size:13px}#fq-data-management{font-size:12px!important;padding:5px 8px!important}}
+  @media(max-width:760px){#fq-drawer[data-selection-page=true]{width:calc(100% - 24px);margin-top:8px;min-height:420px}#fq-drawer[data-selection-page=true] #fq-drawer-head{gap:12px}#fq-drawer[data-selection-page=true] #fq-drawer-title{font-size:18px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs{gap:4px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs button{font-size:13px}#fq-data-management{font-size:12px!important;padding:5px 8px!important}}
 `;
 document.head.append(selectionStyles);
 const pageReviewStyle=document.createElement('style');pageReviewStyle.textContent=`
-  :host([data-page=true]) #review-toolbar{padding:12px 0;min-height:56px;box-sizing:border-box}
-  :host([data-page=true]) #query{height:34px;font-size:13px;max-width:440px}
+  :host([data-page=true]) #review-toolbar{display:flex;align-items:center;gap:6px 12px;padding:6px 0;min-height:44px;box-sizing:border-box}
+  :host([data-page=true]) #review-search{flex:1;min-width:0;align-items:center;gap:10px}
+  :host([data-page=true]) #query{margin:0!important;min-width:120px;flex:1}
+  :host([data-page=true]) #review-filter label{font-size:0}
+  :host([data-page=true]) #review-status{font-size:12px;height:30px}
+  /* Keep controls in their original shadow root; on wide screens they share the tab row visually. */
+  @media(min-width:1180px){:host([data-page=true]) #review-toolbar{position:absolute;top:0;left:160px;right:112px;height:46px;min-height:46px;padding:6px 0;flex-wrap:nowrap;z-index:1}:host([data-page=true]) .sync-toolbar{flex-wrap:nowrap}:host([data-page=true]) #review-search{min-width:240px}}
+  @media(max-width:1179px){:host([data-page=true]) #review-toolbar{flex-wrap:wrap}:host([data-page=true]) #review-search{min-width:min(100%,280px)}}
+  :host([data-page=true]) #query{height:30px;font-size:13px;max-width:320px}
   :host([data-page=true]) #review-layout{grid-template-columns:minmax(320px,39%) minmax(0,1fr)}
   :host([data-page=true]) #review-reader{padding-left:28px}
   :host([data-page=true]) #review-content>header{padding:18px 0 8px}
@@ -51,7 +58,6 @@ const pageReviewStyle=document.createElement('style');pageReviewStyle.textConten
   :host([data-page=true]):not([data-review=true]) #review-search{display:flex;margin:0}
   :host([data-page=true]) #sync-review{max-height:180px;overflow:auto;overscroll-behavior:contain}
   :host([data-page=true]) #review-toolbar:has(#sync-review:not([hidden])){align-items:flex-start}
-  @media(max-width:1000px){:host([data-page=true]) #review-toolbar{min-height:96px}}
   @media(max-height:760px){:host([data-page=true]) #review-book-head{max-height:70px}:host([data-page=true]) .reader-cover{width:44px;height:60px}:host([data-page=true]) #review-content>header{padding-top:8px}:host([data-page=true]) #review-title{font-size:17px;max-height:48px}:host([data-page=true]) #review-content>footer{padding:8px 0}}
   @media(max-width:900px){:host([data-page=true]) #review-layout{grid-template-columns:minmax(260px,40%) minmax(0,1fr)}:host([data-page=true]) #review-reader{padding-left:16px}:host([data-page=true]) #review-text{font-size:14px}:host([data-page=true]) #review-title{font-size:17px}}
   @media(max-width:650px){:host([data-page=true]) #review-layout{display:flex;flex-direction:column}:host([data-page=true]) #rows{height:30%;min-height:110px;flex-shrink:0}:host([data-page=true]) #review-reader{flex:1;min-height:0;border-left:0;border-top:1px solid #eee8e3;padding-left:0}:host([data-page=true]) #review-book-head{max-height:68px}:host([data-page=true]) .reader-cover{width:44px;height:60px}:host([data-page=true]) #review-content>header{padding-top:8px}:host([data-page=true]) #review-title{font-size:15px}:host([data-page=true]):not([data-review=true]) #rows{height:100%}}
@@ -150,8 +156,8 @@ function mountSelectionPage(){
   drawer.dataset.nativeHost=location.pathname.startsWith('/bookshelf')?'bookshelf':'library';
   const native=selectionNativeContent();
   if(native&&!native.contains(drawer)&&!native.querySelector('nav,.muye-header')){if(!native.hasAttribute('data-fq-selection-native'))native.setAttribute('data-fq-selection-native','');if(drawer.nextElementSibling!==native)native.before(drawer);}
-  const top=Math.max(0,drawer.getBoundingClientRect().top+scrollY);const value=Math.round(top)+'px';if(drawer.style.getPropertyValue('--fq-page-top')!==value)drawer.style.setProperty('--fq-page-top',value);
   if(!['later','skip','backup'].includes(drawerTab)){openDrawer(selectionTab());selectionInitial=false;}
+  const top=Math.max(0,drawer.getBoundingClientRect().top+scrollY);const value=Math.round(top)+'px';if(drawer.style.getPropertyValue('--fq-page-top')!==value)drawer.style.setProperty('--fq-page-top',value);
 }
 window.addEventListener('hashchange',()=>{if(isSelectionPage()){mountFilterBar();openDrawer(selectionTab());}else if(selectionMounted)restoreLibraryView();});
 // A deep link can also open rules/history in a fresh library tab.
