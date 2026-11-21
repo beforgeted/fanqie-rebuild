@@ -7,11 +7,12 @@ let reveal = false;
 let timer;
 let lastPath = location.pathname + location.search;
 const normalize = filterNormalize;
-const isSelectionPage = () => /^\/library(?:\/|$)/.test(location.pathname) && (new URLSearchParams(location.search).get('fq_view') === 'selection' || /^#fq-selection\//.test(location.hash));
+const selectionHostRoute=()=>/^\/(?:library|bookshelf)(?:\/|$)/.test(location.pathname);
+const isSelectionPage = () => selectionHostRoute() && (new URLSearchParams(location.search).get('fq_view') === 'selection' || /^#fq-selection\//.test(location.hash));
 const selectionTab = () => {const tab=location.hash.replace(/^#(?:fq-selection\/)?/,'');return ['later','skip','backup'].includes(tab)?tab:'later';};
 const selectionURL = tab => {
   const value=['later','skip','backup'].includes(tab)?tab:'later';
-  if(/^\/library(?:\/|$)/.test(location.pathname)&&new URLSearchParams(location.search).get('fq_view')!=='selection')return location.pathname+location.search+'#fq-selection/'+value;
+  if(selectionHostRoute()&&new URLSearchParams(location.search).get('fq_view')!=='selection')return location.pathname+location.search+'#fq-selection/'+value;
   return '/library?fq_view=selection#'+value;
 };
 const supportedPage = () => !isSelectionPage() && /^\/(?:library|rank)(?:\/|$)/.test(location.pathname);

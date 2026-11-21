@@ -66,7 +66,7 @@ function openDrawer(tab){
   if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
   drawerTab=tab;drawer.dataset.review=String(tab==='later');drawer.hidden=false;host.hidden=false;host.style.display=['rules','history','backup'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
   drawer.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
-  if(choiceListOpen){cq('filter').value=tab;renderChoices();if(tab==='later'&&(opening||!syncAccount))refreshOfficial();}
+  if(choiceListOpen){cq('filter').value=tab;renderChoices();if(tab==='later'&&(opening||!syncAccount))afterSelectionPaint(()=>{if(choiceListOpen&&drawerTab==='later')refreshOfficial();});}
   else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='backup'){$('settings-view').hidden=true;$('backup-view').hidden=false;}if(tab==='rules'&&!drawerRulesLoaded){resetWordDraft();$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
   drawerBody.scrollTop=0;
   if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});

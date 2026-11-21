@@ -36,6 +36,8 @@ function renderChoices(){
     const state=choices.get(detail.id)?.state||'none';
     detailActions.querySelectorAll('button').forEach(b=>{b.className='byte-btn byte-btn-default byte-btn-size-large byte-btn-shape-square muye-button';b.style.cssText='position:static;padding:0 14px;min-width:70px;width:auto!important;margin:0;height:32px;cursor:pointer;background:#f6f6f6;color:#333;border:1px solid #dedede';b.setAttribute('aria-pressed',String(b.dataset.choice===state));if(b.dataset.choice===state&&state!=='none'){b.textContent=state==='later'?'已加入候选':'已设为不想看';b.style.color='#fa6725';b.style.borderColor='#fa6725';}if(b.dataset.choice==='none'){b.hidden=state==='none';if(b.hidden)b.style.display='none';}});
   }else{detailActions.remove();detailFeedback.remove();}
+  // Closed views keep their DOM, but do not rebuild an invisible candidate list.
+  if(choiceHost.hidden)return;
   const mode=cq('filter').value,q=cq('query').value.trim().toLowerCase();
   choiceHost.dataset.review=String(mode==='later');
   cq('review-filter').hidden=mode!=='later';cq('review-reader').hidden=mode!=='later';

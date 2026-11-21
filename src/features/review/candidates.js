@@ -1,5 +1,20 @@
 // Candidate review keeps rows and the reader mounted during status/metadata updates.
 let reviewActive='',reviewListMode=false,reviewPreviousIds=[];
+// Yield a paint before optional network work. Recheck visibility when the task runs.
+function afterSelectionPaint(task){
+  const next=()=>setTimeout(task,0);
+  if(typeof requestAnimationFrame==='function')requestAnimationFrame(next);else next();
+}
+let reviewWorkScheduled=false;
+function scheduleReviewWork(){
+  if(reviewWorkScheduled)return;reviewWorkScheduled=true;
+  afterSelectionPaint(()=>{
+    reviewWorkScheduled=false;
+    if(!choiceListOpen||drawerTab!=='later')return;
+    if(reviewActive&&!reviewLoadState.has(reviewActive))loadReviewBook(reviewActive);
+    drainReviewCovers();
+  });
+}
 const reviewNodes=new Map(),reviewData=new Map(),reviewLoadState=new Map(),reviewFetches=new Map(),noteDrafts=new Map(),noteSaving=new Set();
 const reviewQueue=new Set(),reviewHydrationTried=new Set();let reviewHydrating=0;
 const reviewSearch=document.createElement('div');reviewSearch.id='review-search';cq('query').before(reviewSearch);reviewSearch.append(cq('query'));
@@ -70,7 +85,8 @@ function renderCandidateReview(){
   if(!reviewListMode){list.replaceChildren();reviewListMode=true;}
   const visibleAnchor=[...list.children].find(el=>!el.hidden&&el.getBoundingClientRect().bottom>list.getBoundingClientRect().top);
   const anchor=visibleAnchor?{el:visibleAnchor,top:visibleAnchor.getBoundingClientRect().top}:null;
-  for(const el of [...list.children])if(!ids.includes(el.dataset.id))el.remove();
+  const idSet=new Set(ids);
+  for(const el of [...list.children])if(!idSet.has(el.dataset.id))el.remove();
   for(const [index,row] of rows.entries()){
     const el=reviewNodes.get(row.id)||makeReviewRow(row),status=syncStatus(row.id);
     if(list.children[index]!==el)list.insertBefore(el,list.children[index]||null);
@@ -90,9 +106,9 @@ function renderCandidateReview(){
   if(!ids.includes(reviewActive))reviewActive=ids[Math.min(oldIndex,ids.length-1)]||'';
   reviewPreviousIds=ids;reviewSet(cq('review-empty'),rows.length?'从左侧选择一本候选，查看完整简介':'当前条件下没有候选。可切换筛选，或回书库继续选书。');renderReviewReader();
   for(const [id,el] of reviewNodes){el.dataset.active=String(id===reviewActive);el.querySelector('.review-open').setAttribute('aria-pressed',String(id===reviewActive));}
-  if(choiceListOpen&&drawerTab==='later'){if(reviewActive&&!reviewLoadState.has(reviewActive))loadReviewBook(reviewActive);drainReviewCovers();}
+  if(choiceListOpen&&drawerTab==='later')scheduleReviewWork();
 }
-const reviewCoverObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){reviewQueue.add(e.target.dataset.id);reviewCoverObserver.unobserve(e.target);}drainReviewCovers();},{root:cq('rows'),rootMargin:'100px'}):null;
+const reviewCoverObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){reviewQueue.add(e.target.dataset.id);reviewCoverObserver.unobserve(e.target);}scheduleReviewWork();},{root:cq('rows'),rootMargin:'100px'}):null;
 function drainReviewCovers(){
   if(!choiceListOpen||drawerTab!=='later')return;
   while(reviewHydrating<2&&reviewQueue.size){const id=reviewQueue.values().next().value;reviewQueue.delete(id);if(reviewHydrationTried.has(id)||!choices.get(id)||safeCover(choices.get(id).cover))continue;reviewHydrationTried.add(id);reviewHydrating++;loadReviewBook(id).finally(()=>{reviewHydrating--;drainReviewCovers();});}

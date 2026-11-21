@@ -8,13 +8,8 @@ const selectionStyles=document.createElement('style');
 selectionStyles.textContent=`
   body[data-fq-selection-page] .muye-stack,body[data-fq-selection-page] [data-fq-selection-native],body[data-fq-selection-page] .muye-footer,body[data-fq-selection-page] .zone-footer,body[data-fq-selection-page] .float-wrapper{display:none!important}
   body[data-fq-selection-page] .muye-library{padding-top:80px;display:flow-root}
-  body[data-fq-selection-page] .muye-header-right .nav-item_active:not(#fq-selection-nav){font-weight:400}
-  body[data-fq-selection-page] .muye-header-right .nav-item_active:not(#fq-selection-nav)>a{color:inherit;font-weight:400}
-  body[data-fq-selection-page] .muye-header-right .nav-item_active:not(#fq-selection-nav)>.nav-item-bar{display:none}
   #fq-selection-nav>a{white-space:nowrap;text-decoration:none}
-  body[data-fq-selection-page] #fq-selection-nav>a{color:#ff641e}
-  body[data-fq-selection-page] #fq-selection-nav::after{content:'';position:absolute;bottom:0;left:22%;right:22%;height:2px;background:#ff641e}
-  #fq-selection-nav{position:relative}
+  body[data-fq-selection-page]>.muye-header~#fq-drawer,body[data-fq-selection-page] #fq-drawer[data-native-host=bookshelf]{margin-top:100px}
   #fq-drawer[data-selection-page=true]{position:relative;inset:auto;z-index:auto;display:block;background:#fff;width:min(1440px,calc(100% - 64px));height:calc(100dvh - var(--fq-page-top,100px) - 20px);min-height:420px;margin:20px auto 0;font-family:inherit;box-sizing:border-box}
   #fq-drawer[data-selection-page=true] #fq-drawer-dialog{position:static;transform:none;width:100%;height:100%;max-height:none;border-radius:0;box-shadow:none;overflow:hidden}
   #fq-drawer[data-selection-page=true] #fq-drawer-head{padding:0;gap:26px;min-height:55px}
@@ -90,7 +85,10 @@ function rememberSelectionView(){
 openDrawer=function(tab){
   const page=isSelectionPage(),personal=['later','skip','backup'].includes(tab);
   if(personal&&!page){navigateSelection(tab);return;}
-  if(!personal&&page){returnToLibrary();openDrawer(tab);return;}
+  if(!personal&&page){
+    if(!location.pathname.startsWith('/library')){location.assign('/library#fq-'+tab);return;}
+    returnToLibrary();openDrawer(tab);return;
+  }
   if(page&&drawerTab===tab)return;
   if(page){rememberSelectionView();const previous=selectionViews.get(tab);if(['later','skip'].includes(tab)){cq('query').value=previous?.query||'';if(previous?.active)reviewActive=previous.active;}}
   const opening=!drawerTab;
@@ -112,16 +110,45 @@ closeDrawer=function(){
   if(isSelectionPage())return;
   hideManagementView();filterToolsOpen=false;filterTool.setAttribute('aria-expanded','false');
 };
+// Use the site's own active class and hover bar, including its 400 ms transition.
+const selectionNativeActive=new Set();let selectionNativePath='';
+function selectionNativeContent(){
+  return /^\/bookshelf(?:\/|$)/.test(location.pathname)?document.querySelector('.muye-bookshelf'):document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
+}
+function updateSelectionNavigation(active){
+  if(active){
+    if(!selectionNativePath)selectionNativePath=location.pathname;
+    for(const item of navChoice.parentElement?.querySelectorAll('.nav-item_active')||[])if(item!==navChoice){selectionNativeActive.add(item);item.classList.remove('nav-item_active');}
+    navChoice.classList.add('nav-item_active');
+  }else{
+    navChoice.classList.remove('nav-item_active');
+    if(location.pathname===selectionNativePath)for(const item of selectionNativeActive)if(item.isConnected)item.classList.add('nav-item_active');
+    selectionNativeActive.clear();selectionNativePath='';
+  }
+  // The website changes navigation colors with the header theme.
+  const source=navChoice.parentElement?.querySelector('.nav-item:not(#fq-selection-nav) .nav-item-bar');
+  const border=source?.style.borderTop||'1px solid currentColor';if(navBar.style.borderTop!==border)navBar.style.borderTop=border;
+}
+function unmountSelectionPage(){
+  if(!selectionMounted)return;
+  selectionMounted=false;document.body.removeAttribute('data-fq-selection-page');
+  document.querySelectorAll('[data-fq-selection-native]').forEach(el=>el.removeAttribute('data-fq-selection-native'));
+  hideManagementView();drawer.dataset.selectionPage='false';document.body.append(drawer);
+  if(document.title==='我的选书 · 番茄小说')document.title=selectionTitle;
+  navLink.removeAttribute('aria-current');navLink.target=originalNavTarget;updateSelectionNavigation(false);
+}
 function mountSelectionPage(){
   const libraryLink=document.querySelector('a[href="/library"]');if(libraryLink?.parentElement?.parentElement&&!navChoice.isConnected)libraryLink.parentElement.after(navChoice);
   const active=isSelectionPage();navLink.href=selectionURL('later');
   if(!active){
-    if(selectionMounted){selectionMounted=false;document.body.removeAttribute('data-fq-selection-page');document.querySelectorAll('[data-fq-selection-native]').forEach(el=>el.removeAttribute('data-fq-selection-native'));hideManagementView();drawer.dataset.selectionPage='false';document.body.append(drawer);if(document.title==='我的选书 · 番茄小说')document.title=selectionTitle;navLink.removeAttribute('aria-current');navLink.target=originalNavTarget;}
+    unmountSelectionPage();
     return;
   }
   if(!selectionMounted){suspendLibrary();selectionMounted=true;selectionTitle=document.title;document.body.dataset.fqSelectionPage='';document.title='我的选书 · 番茄小说';navLink.setAttribute('aria-current','page');navLink.target='_self';}
   if(document.title!=='我的选书 · 番茄小说')document.title='我的选书 · 番茄小说';
-  const native=document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
+  updateSelectionNavigation(true);
+  drawer.dataset.nativeHost=location.pathname.startsWith('/bookshelf')?'bookshelf':'library';
+  const native=selectionNativeContent();
   if(native&&!native.contains(drawer)&&!native.querySelector('nav,.muye-header')){if(!native.hasAttribute('data-fq-selection-native'))native.setAttribute('data-fq-selection-native','');if(drawer.nextElementSibling!==native)native.before(drawer);}
   const top=Math.max(0,drawer.getBoundingClientRect().top+scrollY);const value=Math.round(top)+'px';if(drawer.style.getPropertyValue('--fq-page-top')!==value)drawer.style.setProperty('--fq-page-top',value);
   if(!['later','skip','backup'].includes(drawerTab)){openDrawer(selectionTab());selectionInitial=false;}

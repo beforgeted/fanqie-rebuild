@@ -17,7 +17,7 @@ async function FQ_HISTORY(message) {
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.13.1
+// @version      1.13.2
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -478,11 +478,12 @@ let reveal = false;
 let timer;
 let lastPath = location.pathname + location.search;
 const normalize = filterNormalize;
-const isSelectionPage = () => /^\/library(?:\/|$)/.test(location.pathname) && (new URLSearchParams(location.search).get('fq_view') === 'selection' || /^#fq-selection\//.test(location.hash));
+const selectionHostRoute=()=>/^\/(?:library|bookshelf)(?:\/|$)/.test(location.pathname);
+const isSelectionPage = () => selectionHostRoute() && (new URLSearchParams(location.search).get('fq_view') === 'selection' || /^#fq-selection\//.test(location.hash));
 const selectionTab = () => {const tab=location.hash.replace(/^#(?:fq-selection\/)?/,'');return ['later','skip','backup'].includes(tab)?tab:'later';};
 const selectionURL = tab => {
   const value=['later','skip','backup'].includes(tab)?tab:'later';
-  if(/^\/library(?:\/|$)/.test(location.pathname)&&new URLSearchParams(location.search).get('fq_view')!=='selection')return location.pathname+location.search+'#fq-selection/'+value;
+  if(selectionHostRoute()&&new URLSearchParams(location.search).get('fq_view')!=='selection')return location.pathname+location.search+'#fq-selection/'+value;
   return '/library?fq_view=selection#'+value;
 };
 const supportedPage = () => !isSelectionPage() && /^\/(?:library|rank)(?:\/|$)/.test(location.pathname);
@@ -832,6 +833,7 @@ layoutStyle.textContent=`
 `;document.head.append(layoutStyle);
 const navChoice=document.createElement('div');navChoice.className='nav-item';
 const navLink=document.createElement('a');navLink.href=selectionURL('later');navLink.target='_self';navLink.rel='noopener';navLink.textContent='我的选书';navChoice.append(navLink);
+const navBar=document.createElement('div');navBar.className='nav-item-bar';navBar.style.borderTop='1px solid currentColor';navChoice.append(navBar);
 navChoice.id='fq-selection-nav';navLink.onclick=e=>{if(unmodifiedClick(e)){e.preventDefault();navigateSelection('later');}};
 const cq=id=>cs.getElementById(id);
 
@@ -955,6 +957,8 @@ function renderChoices(){
     const state=choices.get(detail.id)?.state||'none';
     detailActions.querySelectorAll('button').forEach(b=>{b.className='byte-btn byte-btn-default byte-btn-size-large byte-btn-shape-square muye-button';b.style.cssText='position:static;padding:0 14px;min-width:70px;width:auto!important;margin:0;height:32px;cursor:pointer;background:#f6f6f6;color:#333;border:1px solid #dedede';b.setAttribute('aria-pressed',String(b.dataset.choice===state));if(b.dataset.choice===state&&state!=='none'){b.textContent=state==='later'?'已加入候选':'已设为不想看';b.style.color='#fa6725';b.style.borderColor='#fa6725';}if(b.dataset.choice==='none'){b.hidden=state==='none';if(b.hidden)b.style.display='none';}});
   }else{detailActions.remove();detailFeedback.remove();}
+  // Closed views keep their DOM, but do not rebuild an invisible candidate list.
+  if(choiceHost.hidden)return;
   const mode=cq('filter').value,q=cq('query').value.trim().toLowerCase();
   choiceHost.dataset.review=String(mode==='later');
   cq('review-filter').hidden=mode!=='later';cq('review-reader').hidden=mode!=='later';
@@ -972,6 +976,21 @@ cq('filter').onchange=renderChoices;cq('query').oninput=renderChoices;
 // SOURCE: src/features/review/candidates.js
 // Candidate review keeps rows and the reader mounted during status/metadata updates.
 let reviewActive='',reviewListMode=false,reviewPreviousIds=[];
+// Yield a paint before optional network work. Recheck visibility when the task runs.
+function afterSelectionPaint(task){
+  const next=()=>setTimeout(task,0);
+  if(typeof requestAnimationFrame==='function')requestAnimationFrame(next);else next();
+}
+let reviewWorkScheduled=false;
+function scheduleReviewWork(){
+  if(reviewWorkScheduled)return;reviewWorkScheduled=true;
+  afterSelectionPaint(()=>{
+    reviewWorkScheduled=false;
+    if(!choiceListOpen||drawerTab!=='later')return;
+    if(reviewActive&&!reviewLoadState.has(reviewActive))loadReviewBook(reviewActive);
+    drainReviewCovers();
+  });
+}
 const reviewNodes=new Map(),reviewData=new Map(),reviewLoadState=new Map(),reviewFetches=new Map(),noteDrafts=new Map(),noteSaving=new Set();
 const reviewQueue=new Set(),reviewHydrationTried=new Set();let reviewHydrating=0;
 const reviewSearch=document.createElement('div');reviewSearch.id='review-search';cq('query').before(reviewSearch);reviewSearch.append(cq('query'));
@@ -1042,7 +1061,8 @@ function renderCandidateReview(){
   if(!reviewListMode){list.replaceChildren();reviewListMode=true;}
   const visibleAnchor=[...list.children].find(el=>!el.hidden&&el.getBoundingClientRect().bottom>list.getBoundingClientRect().top);
   const anchor=visibleAnchor?{el:visibleAnchor,top:visibleAnchor.getBoundingClientRect().top}:null;
-  for(const el of [...list.children])if(!ids.includes(el.dataset.id))el.remove();
+  const idSet=new Set(ids);
+  for(const el of [...list.children])if(!idSet.has(el.dataset.id))el.remove();
   for(const [index,row] of rows.entries()){
     const el=reviewNodes.get(row.id)||makeReviewRow(row),status=syncStatus(row.id);
     if(list.children[index]!==el)list.insertBefore(el,list.children[index]||null);
@@ -1062,9 +1082,9 @@ function renderCandidateReview(){
   if(!ids.includes(reviewActive))reviewActive=ids[Math.min(oldIndex,ids.length-1)]||'';
   reviewPreviousIds=ids;reviewSet(cq('review-empty'),rows.length?'从左侧选择一本候选，查看完整简介':'当前条件下没有候选。可切换筛选，或回书库继续选书。');renderReviewReader();
   for(const [id,el] of reviewNodes){el.dataset.active=String(id===reviewActive);el.querySelector('.review-open').setAttribute('aria-pressed',String(id===reviewActive));}
-  if(choiceListOpen&&drawerTab==='later'){if(reviewActive&&!reviewLoadState.has(reviewActive))loadReviewBook(reviewActive);drainReviewCovers();}
+  if(choiceListOpen&&drawerTab==='later')scheduleReviewWork();
 }
-const reviewCoverObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){reviewQueue.add(e.target.dataset.id);reviewCoverObserver.unobserve(e.target);}drainReviewCovers();},{root:cq('rows'),rootMargin:'100px'}):null;
+const reviewCoverObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){reviewQueue.add(e.target.dataset.id);reviewCoverObserver.unobserve(e.target);}scheduleReviewWork();},{root:cq('rows'),rootMargin:'100px'}):null;
 function drainReviewCovers(){
   if(!choiceListOpen||drawerTab!=='later')return;
   while(reviewHydrating<2&&reviewQueue.size){const id=reviewQueue.values().next().value;reviewQueue.delete(id);if(reviewHydrationTried.has(id)||!choices.get(id)||safeCover(choices.get(id).cover))continue;reviewHydrationTried.add(id);reviewHydrating++;loadReviewBook(id).finally(()=>{reviewHydrating--;drainReviewCovers();});}
@@ -1471,7 +1491,7 @@ function openDrawer(tab){
   if(opening){drawerReturn=document.activeElement;while(drawerReturn?.shadowRoot?.activeElement)drawerReturn=drawerReturn.shadowRoot.activeElement;}
   drawerTab=tab;drawer.dataset.review=String(tab==='later');drawer.hidden=false;host.hidden=false;host.style.display=['rules','history','backup'].includes(tab)?'block':'none';choiceListOpen=['later','skip'].includes(tab);
   drawer.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===tab)));
-  if(choiceListOpen){cq('filter').value=tab;renderChoices();if(tab==='later'&&(opening||!syncAccount))refreshOfficial();}
+  if(choiceListOpen){cq('filter').value=tab;renderChoices();if(tab==='later'&&(opening||!syncAccount))afterSelectionPaint(()=>{if(choiceListOpen&&drawerTab==='later')refreshOfficial();});}
   else {choiceHost.style.display='none';$('panel').hidden=false;showHistory(tab==='history');if(tab==='backup'){$('settings-view').hidden=true;$('backup-view').hidden=false;}if(tab==='rules'&&!drawerRulesLoaded){resetWordDraft();$('enabled').checked=config.enabled;$('abstract').checked=config.abstract;drawerRulesLoaded=true;}}
   drawerBody.scrollTop=0;
   if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});
@@ -1667,13 +1687,8 @@ const selectionStyles=document.createElement('style');
 selectionStyles.textContent=`
   body[data-fq-selection-page] .muye-stack,body[data-fq-selection-page] [data-fq-selection-native],body[data-fq-selection-page] .muye-footer,body[data-fq-selection-page] .zone-footer,body[data-fq-selection-page] .float-wrapper{display:none!important}
   body[data-fq-selection-page] .muye-library{padding-top:80px;display:flow-root}
-  body[data-fq-selection-page] .muye-header-right .nav-item_active:not(#fq-selection-nav){font-weight:400}
-  body[data-fq-selection-page] .muye-header-right .nav-item_active:not(#fq-selection-nav)>a{color:inherit;font-weight:400}
-  body[data-fq-selection-page] .muye-header-right .nav-item_active:not(#fq-selection-nav)>.nav-item-bar{display:none}
   #fq-selection-nav>a{white-space:nowrap;text-decoration:none}
-  body[data-fq-selection-page] #fq-selection-nav>a{color:#ff641e}
-  body[data-fq-selection-page] #fq-selection-nav::after{content:'';position:absolute;bottom:0;left:22%;right:22%;height:2px;background:#ff641e}
-  #fq-selection-nav{position:relative}
+  body[data-fq-selection-page]>.muye-header~#fq-drawer,body[data-fq-selection-page] #fq-drawer[data-native-host=bookshelf]{margin-top:100px}
   #fq-drawer[data-selection-page=true]{position:relative;inset:auto;z-index:auto;display:block;background:#fff;width:min(1440px,calc(100% - 64px));height:calc(100dvh - var(--fq-page-top,100px) - 20px);min-height:420px;margin:20px auto 0;font-family:inherit;box-sizing:border-box}
   #fq-drawer[data-selection-page=true] #fq-drawer-dialog{position:static;transform:none;width:100%;height:100%;max-height:none;border-radius:0;box-shadow:none;overflow:hidden}
   #fq-drawer[data-selection-page=true] #fq-drawer-head{padding:0;gap:26px;min-height:55px}
@@ -1749,7 +1764,10 @@ function rememberSelectionView(){
 openDrawer=function(tab){
   const page=isSelectionPage(),personal=['later','skip','backup'].includes(tab);
   if(personal&&!page){navigateSelection(tab);return;}
-  if(!personal&&page){returnToLibrary();openDrawer(tab);return;}
+  if(!personal&&page){
+    if(!location.pathname.startsWith('/library')){location.assign('/library#fq-'+tab);return;}
+    returnToLibrary();openDrawer(tab);return;
+  }
   if(page&&drawerTab===tab)return;
   if(page){rememberSelectionView();const previous=selectionViews.get(tab);if(['later','skip'].includes(tab)){cq('query').value=previous?.query||'';if(previous?.active)reviewActive=previous.active;}}
   const opening=!drawerTab;
@@ -1771,16 +1789,45 @@ closeDrawer=function(){
   if(isSelectionPage())return;
   hideManagementView();filterToolsOpen=false;filterTool.setAttribute('aria-expanded','false');
 };
+// Use the site's own active class and hover bar, including its 400 ms transition.
+const selectionNativeActive=new Set();let selectionNativePath='';
+function selectionNativeContent(){
+  return /^\/bookshelf(?:\/|$)/.test(location.pathname)?document.querySelector('.muye-bookshelf'):document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
+}
+function updateSelectionNavigation(active){
+  if(active){
+    if(!selectionNativePath)selectionNativePath=location.pathname;
+    for(const item of navChoice.parentElement?.querySelectorAll('.nav-item_active')||[])if(item!==navChoice){selectionNativeActive.add(item);item.classList.remove('nav-item_active');}
+    navChoice.classList.add('nav-item_active');
+  }else{
+    navChoice.classList.remove('nav-item_active');
+    if(location.pathname===selectionNativePath)for(const item of selectionNativeActive)if(item.isConnected)item.classList.add('nav-item_active');
+    selectionNativeActive.clear();selectionNativePath='';
+  }
+  // The website changes navigation colors with the header theme.
+  const source=navChoice.parentElement?.querySelector('.nav-item:not(#fq-selection-nav) .nav-item-bar');
+  const border=source?.style.borderTop||'1px solid currentColor';if(navBar.style.borderTop!==border)navBar.style.borderTop=border;
+}
+function unmountSelectionPage(){
+  if(!selectionMounted)return;
+  selectionMounted=false;document.body.removeAttribute('data-fq-selection-page');
+  document.querySelectorAll('[data-fq-selection-native]').forEach(el=>el.removeAttribute('data-fq-selection-native'));
+  hideManagementView();drawer.dataset.selectionPage='false';document.body.append(drawer);
+  if(document.title==='我的选书 · 番茄小说')document.title=selectionTitle;
+  navLink.removeAttribute('aria-current');navLink.target=originalNavTarget;updateSelectionNavigation(false);
+}
 function mountSelectionPage(){
   const libraryLink=document.querySelector('a[href="/library"]');if(libraryLink?.parentElement?.parentElement&&!navChoice.isConnected)libraryLink.parentElement.after(navChoice);
   const active=isSelectionPage();navLink.href=selectionURL('later');
   if(!active){
-    if(selectionMounted){selectionMounted=false;document.body.removeAttribute('data-fq-selection-page');document.querySelectorAll('[data-fq-selection-native]').forEach(el=>el.removeAttribute('data-fq-selection-native'));hideManagementView();drawer.dataset.selectionPage='false';document.body.append(drawer);if(document.title==='我的选书 · 番茄小说')document.title=selectionTitle;navLink.removeAttribute('aria-current');navLink.target=originalNavTarget;}
+    unmountSelectionPage();
     return;
   }
   if(!selectionMounted){suspendLibrary();selectionMounted=true;selectionTitle=document.title;document.body.dataset.fqSelectionPage='';document.title='我的选书 · 番茄小说';navLink.setAttribute('aria-current','page');navLink.target='_self';}
   if(document.title!=='我的选书 · 番茄小说')document.title='我的选书 · 番茄小说';
-  const native=document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
+  updateSelectionNavigation(true);
+  drawer.dataset.nativeHost=location.pathname.startsWith('/bookshelf')?'bookshelf':'library';
+  const native=selectionNativeContent();
   if(native&&!native.contains(drawer)&&!native.querySelector('nav,.muye-header')){if(!native.hasAttribute('data-fq-selection-native'))native.setAttribute('data-fq-selection-native','');if(drawer.nextElementSibling!==native)native.before(drawer);}
   const top=Math.max(0,drawer.getBoundingClientRect().top+scrollY);const value=Math.round(top)+'px';if(drawer.style.getPropertyValue('--fq-page-top')!==value)drawer.style.setProperty('--fq-page-top',value);
   if(!['later','skip','backup'].includes(drawerTab)){openDrawer(selectionTab());selectionInitial=false;}
@@ -1795,7 +1842,7 @@ setTimeout(()=>{if(supportedPage()&&['#fq-rules','#fq-history'].includes(locatio
 let libraryVisit=null,navigationFrame=0;
 const nativeLibraryURL=()=>{const url=new URL(location.href);url.searchParams.delete('fq_view');if(/^#fq-selection\//.test(url.hash)||['#later','#skip','#backup'].includes(url.hash))url.hash='';return url;};
 function captureLibraryVisit(){
-  const native=document.querySelector('.muye-stack')||document.querySelector('.muye-stack-book-list');
+  const native=selectionNativeContent()||document.querySelector('.muye-stack-book-list');
   const anchors=[...document.querySelectorAll(CARD)].filter(el=>!el.closest('[data-fq-native-hidden]')&&el.getAttribute(MARK)!=='hide').map(el=>({el,top:el.getBoundingClientRect().top})).filter(item=>item.top>=0&&item.top<innerHeight).slice(0,6);
   const containers=[];for(let el=native;el&&el!==document.body;el=el.parentElement)if(el.scrollHeight>el.clientHeight&&/auto|scroll/.test(getComputedStyle(el).overflowY))containers.push({el,top:el.scrollTop,left:el.scrollLeft});
   const url=nativeLibraryURL();
@@ -1818,7 +1865,7 @@ function resumeLibraryPosition(){
 }
 function navigateSelection(tab='later'){
   if(isSelectionPage()){openDrawer(tab);return;}
-  if(!/^\/library(?:\/|$)/.test(location.pathname)){location.assign(selectionURL(tab));return;}
+  if(!selectionHostRoute()){location.assign(selectionURL(tab));return;}
   captureLibraryVisit();closeIntro(false);if(drawerTab)closeDrawer();suspendLibrary();
   history.pushState(history.state,'',selectionURL(tab));
   window.scrollTo({left:0,top:0,behavior:'instant'});mountFilterBar();openDrawer(tab);
@@ -1826,7 +1873,7 @@ function navigateSelection(tab='later'){
 function returnToLibrary(){
   if(!isSelectionPage())return;
   rememberSelectionView();
-  const url=libraryVisit?.native?.isConnected?libraryVisit.url:nativeLibraryURL().href;
+  const url=libraryVisit?.native?.isConnected&&new URL(libraryVisit.url).pathname.startsWith('/library')?libraryVisit.url:nativeLibraryURL().href;
   history.pushState(history.state,'',url);restoreLibraryView();
 }
 function restoreLibraryView(){
@@ -1834,16 +1881,21 @@ function restoreLibraryView(){
   suppressAutoUntil=Date.now()+1500;syncStream();scan();renderChoices();resumeLibraryPosition();
 }
 const unmodifiedClick=e=>e.button===0&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey;
-// Capture only the library navigation item; native category/filter and other links stay native.
+// Returning to the retained native route reuses its DOM. Other navigation stays native.
 document.addEventListener('click',e=>{
   if(!isSelectionPage()||!unmodifiedClick(e))return;
-  const link=e.target.closest?.('a[href]');if(!link||new URL(link.href,location.href).pathname!=='/library'||link===navLink)return;
-  if(!link.closest('.nav-item,nav,.muye-header'))return;
-  e.preventDefault();e.stopImmediatePropagation();returnToLibrary();
+  const link=e.target.closest?.('a[href]');if(!link||link===navLink||!link.closest('.nav-item,nav,.muye-header'))return;
+  const target=new URL(link.href,location.href);if(target.origin!==location.origin)return;
+  const base=libraryVisit?new URL(libraryVisit.url):nativeLibraryURL();
+  const retained=target.pathname===base.pathname||(target.pathname==='/library'&&base.pathname.startsWith('/library/'));
+  if(retained){
+    e.preventDefault();e.stopImmediatePropagation();rememberSelectionView();
+    history.pushState(history.state,'',base.href);restoreLibraryView();
+  }else{rememberSelectionView();unmountSelectionPage();}
 },true);
 window.addEventListener('popstate',e=>{
   if(!isSelectionPage()&&!selectionMounted)return;
-  const base=nativeLibraryURL(),ownRoute=/^\/library(?:\/|$)/.test(location.pathname)&&(!libraryVisit||base.pathname+base.search===new URL(libraryVisit.url).pathname+new URL(libraryVisit.url).search);
+  const base=nativeLibraryURL(),ownRoute=selectionHostRoute()&&(libraryVisit?libraryVisit.native?.isConnected&&base.pathname+base.search===new URL(libraryVisit.url).pathname+new URL(libraryVisit.url).search:!!selectionNativeContent());
   if(!ownRoute){mountFilterBar();return;}
   // Our hash-only entries did not notify the website router; do not make it reload the library now.
   e.stopImmediatePropagation();
