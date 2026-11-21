@@ -1,0 +1,15 @@
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
+const {execFileSync}=require('node:child_process');
+const root=path.resolve(__dirname,'..'),version=JSON.parse(fs.readFileSync(path.join(root,'package.json'))).version;
+const stage=fs.mkdtempSync(path.join(os.tmpdir(),'fanqie-package-'));
+const name='番茄书库重构-v'+version,folder=path.join(stage,name),out=path.join(root,'dist');
+fs.mkdirSync(path.join(folder,'chrome-extension'),{recursive:true});fs.mkdirSync(out,{recursive:true});
+const files=['manifest.json','content.js','background.js','history-core.js','LICENSE.txt','第三方来源与许可.md'];
+for(const file of files)fs.copyFileSync(path.join(root,'chrome-extension',file),path.join(folder,'chrome-extension',file));
+for(const [source,target]of [['docs/安装与更新.md','安装与更新.md'],['docs/更新说明.md','更新说明.md']])fs.copyFileSync(path.join(root,source),path.join(folder,target));
+fs.writeFileSync(path.join(folder,'项目与源码.txt'),'项目与完整源码：https://github.com/beforgeted/fanqie-rebuild\n许可：GPL-3.0-only。安装说明见同目录《安装与更新.md》。\n安装包不包含任何个人选书数据或登录信息。\n','utf8');
+const archive=path.join(out,name+'-Chrome-Edge.zip'),quote=s=>"'"+s.replaceAll("'","''")+"'";
+execFileSync('powershell.exe',['-NoProfile','-Command','Compress-Archive -LiteralPath '+quote(folder)+' -DestinationPath '+quote(archive)+' -Force'],{windowsHide:true});
+const sha=crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+fs.writeFileSync(archive+'.sha256',sha+'  '+path.basename(archive)+'\n');
+console.log('安装包：'+archive+'\nSHA256：'+sha);

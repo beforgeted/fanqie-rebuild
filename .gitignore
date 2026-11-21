@@ -17,3 +17,6 @@ verify-rank.cjs
 
 # 本地重构快照与非发布测试资料
 .local/
+
+# 可重建的发布安装包
+dist/

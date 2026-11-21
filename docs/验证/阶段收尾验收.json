@@ -1,0 +1,157 @@
+{
+  "version": "1.13.8",
+  "scope": "Isolated profiles, historical builds, extracted ZIP, intercepted network only",
+  "cases": [
+    {
+      "browser": "chrome",
+      "from": "1.11.0",
+      "to": "1.13.8",
+      "settings": "legacy words",
+      "inPlaceReload": true,
+      "restartRetained": true,
+      "engine": "Chrome/157.0.8103.79",
+      "viewports": [
+        [
+          1366,
+          768
+        ],
+        [
+          1280,
+          720
+        ],
+        [
+          1024,
+          768
+        ]
+      ],
+      "flow": {
+        "appendUnique": 36,
+        "keywordHidden": true,
+        "introCandidateNote": true,
+        "officialRetryDeduplicated": true,
+        "managementDraftRetained": true,
+        "nativeDOMRetained": true,
+        "detailCrossTab": true,
+        "cleanupDownloadRestore": true
+      },
+      "extensionIdUnchanged": true
+    },
+    {
+      "browser": "chrome",
+      "from": "1.13.7",
+      "to": "1.13.8",
+      "settings": "multiple profiles and disabled group",
+      "inPlaceReload": true,
+      "restartRetained": true,
+      "engine": "Chrome/157.0.8103.79",
+      "viewports": [
+        [
+          1366,
+          768
+        ],
+        [
+          1280,
+          720
+        ],
+        [
+          1024,
+          768
+        ]
+      ],
+      "flow": {
+        "appendUnique": 36,
+        "keywordHidden": true,
+        "introCandidateNote": true,
+        "officialRetryDeduplicated": true,
+        "managementDraftRetained": true,
+        "nativeDOMRetained": true,
+        "detailCrossTab": true,
+        "cleanupDownloadRestore": true
+      },
+      "extensionIdUnchanged": true
+    },
+    {
+      "browser": "edge",
+      "from": "1.11.0",
+      "to": "1.13.8",
+      "settings": "legacy words",
+      "inPlaceReload": true,
+      "restartRetained": true,
+      "engine": "Edg/158.0.4370.33",
+      "viewports": [
+        [
+          1366,
+          768
+        ],
+        [
+          1280,
+          720
+        ],
+        [
+          1024,
+          768
+        ]
+      ],
+      "flow": {
+        "appendUnique": 36,
+        "keywordHidden": true,
+        "introCandidateNote": true,
+        "officialRetryDeduplicated": true,
+        "managementDraftRetained": true,
+        "nativeDOMRetained": true,
+        "detailCrossTab": true,
+        "cleanupDownloadRestore": true
+      },
+      "extensionIdUnchanged": true
+    },
+    {
+      "browser": "edge",
+      "from": "1.13.7",
+      "to": "1.13.8",
+      "settings": "multiple profiles and disabled group",
+      "inPlaceReload": true,
+      "restartRetained": true,
+      "engine": "Edg/158.0.4370.33",
+      "viewports": [
+        [
+          1366,
+          768
+        ],
+        [
+          1280,
+          720
+        ],
+        [
+          1024,
+          768
+        ]
+      ],
+      "flow": {
+        "appendUnique": 36,
+        "keywordHidden": true,
+        "introCandidateNote": true,
+        "officialRetryDeduplicated": true,
+        "managementDraftRetained": true,
+        "nativeDOMRetained": true,
+        "detailCrossTab": true,
+        "cleanupDownloadRestore": true
+      },
+      "extensionIdUnchanged": true
+    }
+  ],
+  "sha256": "46c3dd0ea09d863f389c8ffc9e0c8f6ae2bb192b670eda4cce93458fff6243d4",
+  "fresh": [
+    {
+      "browser": "chrome",
+      "emptyStorageBeforePage": true,
+      "selectionInitialized": true
+    },
+    {
+      "browser": "edge",
+      "emptyStorageBeforePage": true,
+      "selectionInitialized": true
+    }
+  ],
+  "passed": true,
+  "date": "2026-11-21"
+}
