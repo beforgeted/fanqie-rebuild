@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const {JSDOM}=require('jsdom');
-const source=fs.readFileSync(__dirname+'/fanqie-keyword-filter.user.js','utf8');
+const source=fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/fanqie-keyword-filter.user.js','utf8');
 const context=vm.createContext({AbortController,setTimeout,clearTimeout});
 vm.runInContext(source.split('// OFFICIAL_CORE_BEGIN')[1].split('// OFFICIAL_CORE_END')[0],context);
 function fixture(initial=[]){

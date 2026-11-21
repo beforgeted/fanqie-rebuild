@@ -1,6 +1,6 @@
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const {JSDOM}=require('jsdom');
-const source=fs.readFileSync(__dirname+'/fanqie-keyword-filter.user.js','utf8');
+const source=fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/fanqie-keyword-filter.user.js','utf8');
 const card=(id,title,abstract)=>'<div class="stack-book-item"><div class="book-item-cover"><img></div><div class="book-item-text"><a class="book-item-title font-fKts9tCXDjS49UhH" href="/page/'+id+'">'+title+'</a><div class="book-item-desc">作者：测试作者</div><div class="book-item-desc">连载中 · 10万字</div><div class="book-item-desc book-item-abstract">'+abstract+'</div><div class="book-item-footer"></div></div></div>';
 const dom=new JSDOM('<main><div class="muye-stack-book-list">'+card('100001','第一本','列表简介甲')+card('100002','第二本','列表简介乙')+card('100003','原神测试','关键词隐藏书')+'</div><div class="muye-stack-pagination"></div></main>',{url:'https://fanqienovel.com/library/audience1/page_1?sort=hottes',runScripts:'outside-only'});
 const w=dom.window,values={},requests=[],scrollCalls=[],focusCalls=[];

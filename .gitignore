@@ -14,3 +14,6 @@ restore-live-settings.js
 test-live-controls.js
 verify.cjs
 verify-rank.cjs
+
+# 本地重构快照与非发布测试资料
+.local/

@@ -1,0 +1,26 @@
+// ==UserScript==
+// @name         番茄书库 · 二游关键词屏蔽
+// @namespace    local.fanqie.keyword.filter
+// @version      __VERSION__
+// @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
+// @match        https://fanqienovel.com/*
+// @match        https://www.fanqienovel.com/*
+// @run-at       document-idle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_listValues
+// @grant        GM_registerMenuCommand
+// @noframes
+// @license      GPL-3.0-only
+// @copyright    字体映射：naiyQAQ/fanqie-assistant 贡献者；详见下文来源注释。
+// @supportURL   https://github.com/beforgeted/fanqie-rebuild/issues
+// ==/UserScript==
+// GPL version 3 only: https://www.gnu.org/licenses/gpl-3.0.html
+// Source and notices: https://github.com/beforgeted/fanqie-rebuild
+
+/* 字体字符映射复制自 naiyQAQ/fanqie-assistant，作者 naiyQAQ 及贡献者 (GPLv3)。
+ * 两套表各 372 字符，拼接为字符串；本项目另写 readText 读取逻辑。
+ * 2026-11-21 补全来源；上游 README 存在与 GPL 不一致的用途限制，详见仓库 docs/legal/第三方来源与许可.md。
+ * https://github.com/naiyQAQ/fanqie-assistant
+ * https://github.com/naiyQAQ/fanqie-assistant/blob/2fa27f8e885232ca2583e931830f95775368538d/src/fontDecrypt.ts
+ * 仅请求番茄官方接口；用户主动同步候选时写入官方书架，不修改正文。 */

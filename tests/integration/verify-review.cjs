@@ -1,6 +1,6 @@
 const fs=require('node:fs'),assert=require('node:assert/strict'),vm=require('node:vm');
 const {JSDOM}=require('jsdom');
-const source=fs.readFileSync(__dirname+'/fanqie-keyword-filter.user.js','utf8');
+const source=fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/fanqie-keyword-filter.user.js','utf8');
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async fn=>{for(let i=0;i<180;i++){if(fn())return;await wait(20);}throw Error('Timed out');};
 (async()=>{

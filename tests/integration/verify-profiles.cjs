@@ -1,6 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),{performance}=require('node:perf_hooks');
 const {JSDOM}=require('jsdom');
-const root=__dirname,source=fs.readFileSync(root+'/chrome-extension/content.js','utf8');
+const root=require('node:path').resolve(__dirname,'../..'),source=fs.readFileSync(root+'/chrome-extension/content.js','utf8');
 const clone=x=>JSON.parse(JSON.stringify(x)),wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async fn=>{for(let i=0;i<100;i++){if(fn())return;await wait(20);}throw Error('等待超时');};
 const key='fq-keyword-filter-v1',values={[key]:{words:['原神','崩铁','星铁','星穹铁道','Hello World'],enabled:true,abstract:false},'fq-choice-100003':{id:'100003',title:'保留候选',state:'later',note:'保留备注'},'fq-history-book-100004':{id:'100004',title:'保留记录',matches:['原神'],firstSeen:1,lastSeen:1,handledAt:2}},initial=clone(values);
@@ -8,7 +8,7 @@ const watches=[],windows=[];let listener,fail=false;
 const storage={async get(k){return clone(k===null?values:typeof k==='string'?{[k]:values[k]}:Object.fromEntries(k.filter(x=>values[x]!==undefined).map(x=>[x,values[x]])));},async set(patch){await wait(3);if(fail)throw Error('quota');const changes={};for(const [k,v]of Object.entries(patch)){changes[k]={oldValue:values[k],newValue:clone(v)};values[k]=clone(v);}for(const fn of watches)fn(changes,'local');}};
 const ctx=vm.createContext({URL,chrome:{runtime:{id:'test',onMessage:{addListener:fn=>listener=fn}},storage:{local:storage}}});
 ctx.importScripts=n=>vm.runInContext(fs.readFileSync(root+'/chrome-extension/'+n,'utf8'),ctx);
-vm.runInContext(fs.readFileSync(root+'/history-background.js','utf8'),ctx);
+vm.runInContext(fs.readFileSync(root+'/src/platform/chrome/background.js','utf8'),ctx);
 const send=msg=>new Promise(resolve=>listener({channel:'fq-filter-history',...msg},{id:'test',url:'https://fanqienovel.com/library'},resolve));
 function page(){const w=new JSDOM('<nav><div class="nav-item"><a href="/library">书库</a></div></nav><main class="muye-stack-book-list"><div class="stack-book-item"><div class="book-item-text"><a class="book-item-title" href="/page/100001">崩铁：测试</a><div class="book-item-abstract">原神简介</div></div></div><div class="stack-book-item"><div class="book-item-text"><a class="book-item-title" href="/page/100002">普通故事</a><div class="book-item-abstract">原神设定</div></div></div></main>',{url:'https://fanqienovel.com/library',runScripts:'outside-only'}).window;windows.push(w);w.chrome={storage:{local:storage,onChanged:{addListener:f=>watches.push(f)}},runtime:{sendMessage:send}};w.fetch=async()=>{throw Error('无网络');};w.eval(source);return w;}
 const sh=w=>w.document.getElementById('fq-keyword-filter-host').shadowRoot;

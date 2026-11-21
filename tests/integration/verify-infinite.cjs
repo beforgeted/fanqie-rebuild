@@ -1,6 +1,6 @@
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const {JSDOM}=require('jsdom');
-const source=fs.readFileSync(__dirname+'/fanqie-keyword-filter.user.js','utf8');
+const source=fs.readFileSync(require('node:path').resolve(__dirname,'../..')+'/fanqie-keyword-filter.user.js','utf8');
 const html='<main><div class="muye-stack-book-list"><div class="stack-book-item"><div class="book-item-cover"><img></div><div class="book-item-text"><a class="book-item-title font-fKts9tCXDjS49UhH" href="/page/100001">火影</a><div class="book-item-desc">作者：作者</div><div class="book-item-desc">连载中</div><div class="book-item-abstract font-fKts9tCXDjS49UhH">忍者</div><div class="book-item-footer"></div></div></div></div><div class="muye-stack-pagination"></div></main>';
 const dom=new JSDOM(html,{url:'https://fanqienovel.com/library/audience1-cat2-718/page_6?sort=hottes',runScripts:'outside-only'});
 const w=dom.window,values={},requests=[];

@@ -3,7 +3,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const {JSDOM} = require('jsdom');
-const source = fs.readFileSync(path.join(__dirname,'chrome-extension/content.js'),'utf8');
+const source = fs.readFileSync(path.join(require('node:path').resolve(__dirname,'../..'),'chrome-extension/content.js'),'utf8');
 const values = {}, windows = [];
 const wait = ms=>new Promise(r=>setTimeout(r,ms));
 const clone = value=>JSON.parse(JSON.stringify(value));
@@ -13,8 +13,8 @@ const storage = {
   async set(patch) { await wait(4); if(failWrites) throw Error('quota'); Object.assign(values,clone(patch)); }
 };
 const context = vm.createContext({URL,chrome:{runtime:{id:'test-extension',onMessage:{addListener:fn=>listener=fn}},storage:{local:storage}}});
-context.importScripts = name=>vm.runInContext(fs.readFileSync(path.join(__dirname,'chrome-extension',name),'utf8'),context);
-vm.runInContext(fs.readFileSync(path.join(__dirname,'history-background.js'),'utf8'),context);
+context.importScripts = name=>vm.runInContext(fs.readFileSync(path.join(require('node:path').resolve(__dirname,'../..'),'chrome-extension',name),'utf8'),context);
+vm.runInContext(fs.readFileSync(path.join(require('node:path').resolve(__dirname,'../..'),'src/platform/chrome/background.js'),'utf8'),context);
 const send = (message,url='https://fanqienovel.com/library')=>new Promise(resolve=>listener({channel:'fq-filter-history',...message},{id:'test-extension',url},resolve));
 function page(title='原神：旅途',id='1234567890123456789') {
   const dom = new JSDOM('<html><body><nav><div class="nav-item"><a href="/library">书库</a></div></nav><main class="muye-stack-book-list"><div class="stack-book-item"><div class="book-item-text"><a class="book-item-title"></a><div class="book-item-desc">作者：测试作者</div><div class="book-item-abstract">冒险故事</div></div></div></main></body></html>',{url:'https://fanqienovel.com/library/test',runScripts:'outside-only'});

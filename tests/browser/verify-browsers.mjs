@@ -1,5 +1,5 @@
-import fs from 'node:fs/promises';import path from 'node:path';import os from 'node:os';import assert from 'node:assert/strict';import {pathToFileURL} from 'node:url';import {execFileSync} from 'node:child_process';
-const root=process.cwd();const {puppeteer}=await import(pathToFileURL(path.join(root,'devtools-runtime/node_modules/chrome-devtools-mcp/build/src/third_party/index.js')).href);
+import fs from 'node:fs/promises';import path from 'node:path';import os from 'node:os';import assert from 'node:assert/strict';import {pathToFileURL,fileURLToPath} from 'node:url';import {execFileSync} from 'node:child_process';
+const root=fileURLToPath(new URL('../../',import.meta.url));const {puppeteer}=await import(pathToFileURL(path.join(root,'devtools-runtime/node_modules/chrome-devtools-mcp/build/src/third_party/index.js')).href);
 const wait=ms=>new Promise(r=>setTimeout(r,ms));const browsers=[];const artifacts=await fs.mkdtemp(path.join(os.tmpdir(),'fanqie-migration-qa-'));console.log('Test artifacts:',artifacts);
 const card='<main class="muye-stack-book-list"><div class="stack-book-item"><div class="book-item-text"><a class="book-item-title" href="/page/123456">普通冒险</a><div class="book-item-abstract">测试简介</div></div></div></main>';
 async function start(name,executablePath){
