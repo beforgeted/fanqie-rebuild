@@ -43,6 +43,28 @@ const until=async fn=>{for(let i=0;i<180;i++){if(fn())return;await wait(20);}thr
   assert.equal(sh.querySelectorAll('.review-row').length,12);assert.equal(sh.querySelectorAll('.sync-one').length,0,'single-book sync stays in the reader, not duplicated in rows');assert.equal(q('review-cover').src,'https://example.invalid/cover-200001.jpg','extract actual cover, never spinner');
   assert.equal(q('review-text').querySelector('img'),null);assert.equal(q('review-badge').textContent,'已同步');assert.equal(w.document.querySelector('#fq-intro-host').hidden,true,'no second popup');
   assert.deepEqual(requests.filter(x=>x.startsWith('/page/')),['/page/200001'],'do not fetch entire library');
+  // Keyboard navigation stays local to the candidate list and follows filtered order.
+  const active=()=>q('review-content').dataset.id;
+  const key=(target,name,extra={})=>{const event=new w.KeyboardEvent('keydown',{key:name,bubbles:true,composed:true,cancelable:true,...extra});target.dispatchEvent(event);return event;};
+  sh.querySelector('[data-id="200001"] .review-row-snippet').click();
+  assert.equal(sh.activeElement,sh.querySelector('[data-id="200001"] .review-open'),'clicking row text focuses list navigation');
+  key(sh.activeElement,'ArrowUp');assert.equal(active(),'200001','first item does not wrap');
+  assert.equal(key(sh.activeElement,'ArrowDown').defaultPrevented,true);assert.equal(active(),'200002');
+  assert.equal(sh.activeElement,sh.querySelector('[data-id="200002"] .review-open'));
+  key(q('note-input'),'ArrowDown');key(q('query'),'ArrowDown');key(q('review-status'),'ArrowUp');key(q('review-text'),'ArrowDown');
+  assert.equal(active(),'200002','editor, search, select and reader keep their original key behavior');
+  key(sh.activeElement,'ArrowDown',{ctrlKey:true});assert.equal(active(),'200002');
+  key(sh.querySelector('[data-id="200002"] .candidate-check'),'ArrowDown');assert.equal(active(),'200002');
+  q('query').value='候选1';q('query').oninput();select('200010');q('review-next').click();assert.equal(active(),'200011','next follows search results');
+  q('review-next').click();assert.equal(active(),'200012');assert.equal(q('review-next').disabled,true);
+  q('review-next').click();assert.equal(active(),'200012','next does not wrap');
+  q('query').value='没有匹配的候选';q('query').oninput();assert.equal(q('review-next').disabled,true);
+  q('query').value='';q('query').oninput();select('200001');
+  const list=q('rows'),second=sh.querySelector('[data-id="200002"]'),listRect=list.getBoundingClientRect,secondRect=second.getBoundingClientRect;
+  list.getBoundingClientRect=()=>({top:100,bottom:300,height:200});second.getBoundingClientRect=()=>({top:330,bottom:480,height:150});list.scrollTop=0;
+  q('review-next').focus();q('review-next').click();assert.equal(list.scrollTop,180,'only reveal offscreen target within list');assert.equal(sh.activeElement,q('review-next'),'next button keeps focus');
+  list.getBoundingClientRect=listRect;second.getBoundingClientRect=secondRect;select('200001');
+  console.log('PASS candidate keyboard/next: focus, boundaries, filtered order, input exclusions and local scrolling');
   const initial={url:w.location.href,html:w.document.documentElement.getAttribute('style'),body:w.document.body.getAttribute('style')};
   const firstNode=sh.querySelector('[data-id="200001"]');q('rows').scrollTop=420;
   select('200002');await until(()=>q('review-load').textContent==='完整简介');assert.equal(q('rows').scrollTop,420);assert.equal(sh.querySelector('[data-id="200001"]'),firstNode,'status changes keep row DOM');

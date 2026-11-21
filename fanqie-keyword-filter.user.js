@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.13.4
+// @version      1.13.5
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -921,7 +921,7 @@ async function choose(book,state,{quiet=false}={}) {
     if(detailBook()){detailFeedback.replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));const back=undo.cloneNode(true);back.onclick=()=>choose(book,prior);detailFeedback.append(back);}
     return true;
   } catch {if(quiet)return false;const error='保存失败，请重试；原标记未改变。';cq('msg').textContent=error;if(detailBook())detailFeedback.textContent=error;else if(drawerReady){if(isSelectionPage())openDrawer(prior==='skip'?'skip':'later');else {introNotice.textContent=error;introNotice.hidden=false;}}else{choiceListOpen=true;renderChoices();}}
-  finally{choiceBusy=false;}
+  finally{choiceBusy=false;if(choiceListOpen&&drawerTab==='later')renderReviewReader();}
 }
 function detailBook(){const id=location.pathname.match(/^\/page\/(\d+)/)?.[1];const title=document.querySelector('h1')?.textContent.trim();return id&&title?{id,title,abstract:document.querySelector('.page-abstract-content')?.textContent||'',author:document.querySelector('.author-name')?.textContent.trim()||''}:null;}
 function renderChoices(){
@@ -990,9 +990,9 @@ const feedbackTitles=new MutationObserver(()=>{for(const id of ['msg','sync-mess
 feedbackTitles.observe(reviewFeedback,{childList:true,subtree:true,characterData:true});
 const reviewLayout=document.createElement('div');reviewLayout.id='review-layout';
 cq('rows').before(reviewLayout);reviewLayout.append(cq('rows'));cq('rows').setAttribute('data-review-scroll','');
-cq('rows').setAttribute('aria-label','候选书籍列表');
+cq('rows').setAttribute('aria-label','候选书籍列表，使用上下方向键切换书籍');cq('rows').tabIndex=0;
 const reader=document.createElement('section');reader.id='review-reader';reader.setAttribute('aria-label','候选简介阅读区');
-reader.innerHTML='<div id="review-empty">从左侧选择一本候选，查看完整简介</div><div id="review-content" hidden><header><div id="review-book-head"><div class="review-cover reader-cover"><span class="cover-placeholder">暂无封面</span><img id="review-cover" alt="" hidden><span id="review-badge" class="review-badge"></span></div><div><span class="review-eyebrow">候选复筛</span><h2 id="review-title"></h2><p id="review-author"></p><p id="review-meta"></p></div></div><div class="review-statusline"><span id="review-load" role="status"></span><button id="review-reload">重试读取</button></div></header><div id="review-text" data-review-scroll tabindex="0" aria-label="完整简介"></div><div id="review-note"><button id="note-toggle" aria-expanded="false">＋ 留下一句备注（可选）</button><div id="note-editor" hidden><textarea id="note-input" maxlength="2000" placeholder="为什么留下它？例如：设定感兴趣，想先试几章。" aria-label="候选备注"></textarea><div class="note-toolbar"><span id="note-message" role="status"></span><button id="note-latest" hidden>载入另一页的备注</button><button id="note-save">保存备注</button></div></div></div><footer><button id="review-sync" class="primary">加入官方待看</button><button id="review-skip">不想看</button><button id="review-remove">移出候选</button><a id="review-detail" target="_blank" rel="noopener noreferrer">查看详情 ↗</a></footer></div>';
+reader.innerHTML='<div id="review-empty">从左侧选择一本候选，查看完整简介</div><div id="review-content" hidden><header><div id="review-book-head"><div class="review-cover reader-cover"><span class="cover-placeholder">暂无封面</span><img id="review-cover" alt="" hidden><span id="review-badge" class="review-badge"></span></div><div><span class="review-eyebrow">候选复筛</span><h2 id="review-title"></h2><p id="review-author"></p><p id="review-meta"></p></div></div><div class="review-statusline"><span id="review-load" role="status"></span><button id="review-reload">重试读取</button></div></header><div id="review-text" data-review-scroll tabindex="0" aria-label="完整简介"></div><div id="review-note"><button id="note-toggle" aria-expanded="false">＋ 留下一句备注（可选）</button><div id="note-editor" hidden><textarea id="note-input" maxlength="2000" placeholder="为什么留下它？例如：设定感兴趣，想先试几章。" aria-label="候选备注"></textarea><div class="note-toolbar"><span id="note-message" role="status"></span><button id="note-latest" hidden>载入另一页的备注</button><button id="note-save">保存备注</button></div></div></div><footer><button id="review-sync" class="primary">加入官方待看</button><button id="review-skip">不想看</button><button id="review-remove">移出候选</button><button id="review-next" type="button">下一个</button><a id="review-detail" target="_blank" rel="noopener noreferrer">查看详情 ↗</a></footer></div>';
 reviewLayout.append(reader);for(const id of ['note-input','review-title','review-meta','review-book-head'])cq(id).setAttribute('data-review-scroll','');
 const reviewStyle=document.createElement('style');
 reviewStyle.textContent=[
@@ -1036,8 +1036,8 @@ function makeReviewRow(row){
   const el=document.createElement('div');el.className='review-row';el.dataset.id=row.id;
   el.innerHTML='<button class="review-cover"><span class="cover-placeholder">暂无封面</span><img alt="" hidden><span class="review-badge"></span></button><div class="review-row-main"><button class="review-open"></button><div class="review-row-author"></div><div class="review-row-meta"></div><div class="review-row-snippet"></div><div class="review-row-note"></div></div>';
   addSyncControls(row,el);
-  for(const b of el.querySelectorAll('.review-cover,.review-open'))b.onclick=()=>selectReview(row.id);
-  el.onclick=e=>{if(!e.target.closest('button,input,a')&&!window.getSelection()?.toString())selectReview(row.id);};
+  for(const b of el.querySelectorAll('.review-cover,.review-open'))b.onclick=()=>selectReview(row.id,{focusList:true});
+  el.onclick=e=>{if(!e.target.closest('button,input,a')&&!window.getSelection()?.toString())selectReview(row.id,{focusList:true});};
   reviewNodes.set(row.id,el);return el;
 }
 function renderCandidateReview(){
@@ -1083,10 +1083,32 @@ async function loadReviewBook(id,force=false){
   finally{reviewFetches.delete(id);if(drawerTab==='later')renderChoices();}
   })();reviewFetches.set(id,task);return task;
 }
-function selectReview(id){if(!choices.has(id))return;reviewActive=id;renderCandidateReview();}
+function selectReview(id,{focusList=false}={}){
+  if(!choices.has(id))return;reviewActive=id;renderCandidateReview();
+  if(focusList)reviewNodes.get(id)?.querySelector('.review-open').focus({preventScroll:true});
+}
+function moveReview(step,{focusList=false}={}){
+  if(drawerTab!=='later'||!choiceListOpen||choiceBusy)return;
+  const index=reviewPreviousIds.indexOf(reviewActive),next=index+step;
+  if(index<0||next<0||next>=reviewPreviousIds.length)return;
+  selectReview(reviewPreviousIds[next],{focusList});
+  // Reveal only within the candidate list; never scroll the page or the native library.
+  const list=cq('rows'),row=reviewNodes.get(reviewActive),bounds=list.getBoundingClientRect(),rect=row.getBoundingClientRect();
+  if(rect.top<bounds.top||rect.height>bounds.height)list.scrollTop+=rect.top-bounds.top;
+  else if(rect.bottom>bounds.bottom)list.scrollTop+=rect.bottom-bounds.bottom;
+}
+cq('rows').addEventListener('keydown',e=>{
+  if(!['ArrowUp','ArrowDown'].includes(e.key)||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.isComposing)return;
+  if(drawerTab!=='later'||e.target.closest('input,textarea,select,[contenteditable=true]'))return;
+  e.preventDefault();e.stopPropagation();moveReview(e.key==='ArrowDown'?1:-1,{focusList:true});
+});
+cq('review-next').onclick=()=>moveReview(1);
 function draftFor(row){let draft=noteDrafts.get(row.id);if(!draft||(!draft.dirty&&!noteSaving.has(row.id))){draft={value:row.note||'',revision:row.noteRevision||0,dirty:false,open:draft?.open||false,message:''};noteDrafts.set(row.id,draft);}return draft;}
 function renderReviewReader(){
-  const row=choices.get(reviewActive),content=cq('review-content');cq('review-empty').hidden=!!row;content.hidden=!row;if(!row)return;
+  const row=choices.get(reviewActive),content=cq('review-content');
+  const index=reviewPreviousIds.indexOf(reviewActive),last=index<0||index>=reviewPreviousIds.length-1;
+  cq('review-next').disabled=!row||last||choiceBusy;cq('review-next').title=last?'已是最后一本候选':'查看下一本候选';
+  cq('review-empty').hidden=!!row;content.hidden=!row;if(!row)return;
   const changed=content.dataset.id!==row.id;content.dataset.id=row.id;
   const full=reviewData.get(row.id),status=syncStatus(row.id),draft=draftFor(row),load=reviewLoadState.get(row.id);
   reviewSet(cq('review-title'),full?.title||row.title);reviewSet(cq('review-author'),full?.author||row.author||'作者信息待补充');reviewSet(cq('review-meta'),full?.meta||row.meta||'字数与连载状态待补充');

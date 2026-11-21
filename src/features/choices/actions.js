@@ -16,7 +16,7 @@ async function choose(book,state,{quiet=false}={}) {
     if(detailBook()){detailFeedback.replaceChildren(document.createTextNode('已保存：'+stateLabel(state)+'。'));const back=undo.cloneNode(true);back.onclick=()=>choose(book,prior);detailFeedback.append(back);}
     return true;
   } catch {if(quiet)return false;const error='保存失败，请重试；原标记未改变。';cq('msg').textContent=error;if(detailBook())detailFeedback.textContent=error;else if(drawerReady){if(isSelectionPage())openDrawer(prior==='skip'?'skip':'later');else {introNotice.textContent=error;introNotice.hidden=false;}}else{choiceListOpen=true;renderChoices();}}
-  finally{choiceBusy=false;}
+  finally{choiceBusy=false;if(choiceListOpen&&drawerTab==='later')renderReviewReader();}
 }
 function detailBook(){const id=location.pathname.match(/^\/page\/(\d+)/)?.[1];const title=document.querySelector('h1')?.textContent.trim();return id&&title?{id,title,abstract:document.querySelector('.page-abstract-content')?.textContent||'',author:document.querySelector('.author-name')?.textContent.trim()||''}:null;}
 function renderChoices(){
