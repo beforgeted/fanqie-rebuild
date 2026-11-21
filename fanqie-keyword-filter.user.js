@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.13.3
+// @version      1.13.4
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -462,7 +462,7 @@ let reveal = false;
 let timer;
 let lastPath = location.pathname + location.search;
 const normalize = filterNormalize;
-const selectionHostRoute=()=>/^\/(?:library|bookshelf)(?:\/|$)/.test(location.pathname);
+const selectionHostRoute=()=>location.pathname==='/'||/^\/(?:library|bookshelf)(?:\/|$)/.test(location.pathname);
 const isSelectionPage = () => selectionHostRoute() && (new URLSearchParams(location.search).get('fq_view') === 'selection' || /^#fq-selection\//.test(location.hash));
 const selectionTab = () => {const tab=location.hash.replace(/^#(?:fq-selection\/)?/,'');return ['later','skip','backup'].includes(tab)?tab:'later';};
 const selectionURL = tab => {
@@ -1661,8 +1661,8 @@ function applyInfinitePreference(value){if(typeof value!=='boolean'||value===inf
 if(typeof FQ_PREF_WATCH==='function')FQ_PREF_WATCH(applyInfinitePreference);
 
 // SOURCE: src/features/shell/selection-page.js
-// A dedicated same-origin page keeps official navigation and account-backed APIs.
-// /library remains a valid server route, so bookmarks and refresh need no server changes.
+// One page shell is shared by home, library and shelf entries.
+// Native content remains mounted and is restored when leaving the virtual view.
 const renderManagementView=openDrawer,hideManagementView=closeDrawer;
 let selectionMounted=false,selectionTitle='',selectionInitial=true;
 const selectionViews=new Map();
@@ -1670,10 +1670,10 @@ const originalNavTarget=navLink.target;
 const selectionStyles=document.createElement('style');
 selectionStyles.textContent=`
   body[data-fq-selection-page] .muye-stack,body[data-fq-selection-page] [data-fq-selection-native],body[data-fq-selection-page] .muye-footer,body[data-fq-selection-page] .zone-footer,body[data-fq-selection-page] .float-wrapper{display:none!important}
-  body[data-fq-selection-page] .muye-library{padding-top:80px;display:flow-root;min-width:0;width:100%}
+  body[data-fq-selection-page]{display:flow-root;background:#fff!important}
+  body[data-fq-selection-page] .muye-header{background:#fff!important;transition:none!important}
   #fq-selection-nav>a{white-space:nowrap;text-decoration:none}
-  body[data-fq-selection-page]>.muye-header~#fq-drawer,body[data-fq-selection-page] #fq-drawer[data-native-host=bookshelf]{margin-top:88px}
-  #fq-drawer[data-selection-page=true]{position:relative;inset:auto;z-index:auto;display:block;background:#fff;width:min(1440px,calc(100% - 64px));height:calc(100dvh - var(--fq-page-top,88px) - 12px);min-height:420px;margin:8px auto 0;font-family:inherit;box-sizing:border-box}
+  #fq-drawer[data-selection-page=true]{position:fixed;inset:88px 0 12px;z-index:auto;display:block;background:#fff;width:min(1440px,calc(100% - 64px));height:auto;min-height:420px;margin:0 auto;font-family:inherit;box-sizing:border-box}
   #fq-drawer[data-selection-page=true] #fq-drawer-dialog{position:static;transform:none;width:100%;height:100%;max-height:none;border-radius:0;box-shadow:none;overflow:hidden}
   #fq-drawer[data-selection-page=true] #fq-drawer-head{padding:0;gap:12px;min-height:46px}
   #fq-drawer[data-selection-page=true] #fq-drawer-title{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
@@ -1694,7 +1694,7 @@ selectionStyles.textContent=`
   #fq-drawer:not([data-selection-page=true]) #fq-drawer-tabs button{padding:8px 0}
   #fq-drawer:not([data-selection-page=true]) #fq-drawer-body{padding:0 20px 16px;flex:1;scrollbar-gutter:stable;scroll-padding-bottom:90px}
   #fq-drawer button[hidden]{display:none!important}
-  @media(max-width:760px){#fq-drawer[data-selection-page=true]{width:calc(100% - 24px);margin-top:8px;min-height:420px}#fq-drawer[data-selection-page=true] #fq-drawer-head{gap:12px}#fq-drawer[data-selection-page=true] #fq-drawer-title{font-size:18px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs{gap:4px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs button{font-size:13px}#fq-data-management{font-size:12px!important;padding:5px 8px!important}}
+  @media(max-width:760px){#fq-drawer[data-selection-page=true]{width:calc(100% - 24px);margin-top:0;min-height:420px}#fq-drawer[data-selection-page=true] #fq-drawer-head{gap:12px}#fq-drawer[data-selection-page=true] #fq-drawer-title{font-size:18px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs{gap:4px}#fq-drawer[data-selection-page=true] #fq-drawer-tabs button{font-size:13px}#fq-data-management{font-size:12px!important;padding:5px 8px!important}}
 `;
 document.head.append(selectionStyles);
 const pageReviewStyle=document.createElement('style');pageReviewStyle.textContent=`
@@ -1782,7 +1782,9 @@ closeDrawer=function(){
 // Use the site's own active class and hover bar, including its 400 ms transition.
 const selectionNativeActive=new Set();let selectionNativePath='';
 function selectionNativeContent(){
-  return /^\/bookshelf(?:\/|$)/.test(location.pathname)?document.querySelector('.muye-bookshelf'):document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
+  if(location.pathname==='/')return document.querySelector('.muye-')||document.querySelector('.muye-home');
+  if(/^\/bookshelf(?:\/|$)/.test(location.pathname))return document.querySelector('.muye-bookshelf');
+  return document.querySelector('.muye-library')||document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
 }
 function updateSelectionNavigation(active){
   if(active){
@@ -1816,11 +1818,11 @@ function mountSelectionPage(){
   if(!selectionMounted){suspendLibrary();selectionMounted=true;selectionTitle=document.title;document.body.dataset.fqSelectionPage='';document.title='我的选书 · 番茄小说';navLink.setAttribute('aria-current','page');navLink.target='_self';}
   if(document.title!=='我的选书 · 番茄小说')document.title='我的选书 · 番茄小说';
   updateSelectionNavigation(true);
-  drawer.dataset.nativeHost=location.pathname.startsWith('/bookshelf')?'bookshelf':'library';
   const native=selectionNativeContent();
-  if(native&&!native.contains(drawer)&&!native.querySelector('nav,.muye-header')){if(!native.hasAttribute('data-fq-selection-native'))native.setAttribute('data-fq-selection-native','');if(drawer.nextElementSibling!==native)native.before(drawer);}
+  // Never inherit page-specific backgrounds, padding or min-width from a native route.
+  if(drawer.parentElement!==document.body)document.body.append(drawer);
+  if(native&&!native.contains(drawer)&&!native.querySelector('nav,.muye-header')&&!native.hasAttribute('data-fq-selection-native'))native.setAttribute('data-fq-selection-native','');
   if(!['later','skip','backup'].includes(drawerTab)){openDrawer(selectionTab());selectionInitial=false;}
-  const top=Math.max(0,drawer.getBoundingClientRect().top+scrollY);const value=Math.round(top)+'px';if(drawer.style.getPropertyValue('--fq-page-top')!==value)drawer.style.setProperty('--fq-page-top',value);
 }
 window.addEventListener('hashchange',()=>{if(isSelectionPage()){mountFilterBar();openDrawer(selectionTab());}else if(selectionMounted)restoreLibraryView();});
 // A deep link can also open rules/history in a fresh library tab.

@@ -7,7 +7,7 @@ let reveal = false;
 let timer;
 let lastPath = location.pathname + location.search;
 const normalize = filterNormalize;
-const selectionHostRoute=()=>/^\/(?:library|bookshelf)(?:\/|$)/.test(location.pathname);
+const selectionHostRoute=()=>location.pathname==='/'||/^\/(?:library|bookshelf)(?:\/|$)/.test(location.pathname);
 const isSelectionPage = () => selectionHostRoute() && (new URLSearchParams(location.search).get('fq_view') === 'selection' || /^#fq-selection\//.test(location.hash));
 const selectionTab = () => {const tab=location.hash.replace(/^#(?:fq-selection\/)?/,'');return ['later','skip','backup'].includes(tab)?tab:'later';};
 const selectionURL = tab => {

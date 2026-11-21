@@ -18,7 +18,7 @@ function page(url){
  const view=page(link.href);await until(()=>view.document.body.hasAttribute('data-fq-selection-page'));
  const drawer=view.document.getElementById('fq-drawer'),shadow=view.document.getElementById('fq-choice-host').shadowRoot;
  assert.equal(drawer.hidden,false);assert.equal(drawer.querySelector('[role=region]').getAttribute('aria-modal'),null);
- assert.equal(view.document.querySelector('nav').isConnected,true);assert.ok(view.document.querySelector('.muye-stack').hasAttribute('data-fq-selection-native'));
+ assert.equal(view.document.querySelector('nav').isConnected,true);assert.ok(view.document.querySelector('.muye-library').hasAttribute('data-fq-selection-native'));
  assert.equal(view.document.querySelector('[data-fq-stream]'),null,'independent page never starts an infinite library stream');
  assert.deepEqual([...drawer.querySelectorAll('[data-tab]')].filter(e=>!e.hidden).map(e=>e.dataset.tab),['later','skip','backup']);
  assert.equal(shadow.getElementById('sync-batch').hidden,true,'batch write action appears only after selection');
