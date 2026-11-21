@@ -4,6 +4,7 @@ function scan() {
     const active = supportedPage();
     host.hidden = drawerReady?false:!active;
     if (!active) {
+      if(isSelectionPage())return; // Keep the hidden library's filtering and layout intact.
       document.querySelectorAll(`[${MARK}]`).forEach(card => card.removeAttribute(MARK));
       alignLibraryCards();
       return;

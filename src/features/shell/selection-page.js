@@ -89,8 +89,8 @@ function rememberSelectionView(){
 }
 openDrawer=function(tab){
   const page=isSelectionPage(),personal=['later','skip','backup'].includes(tab);
-  if(personal&&!page){window.open(selectionURL(tab),'_blank','noopener');return;}
-  if(!personal&&page){window.open('/library#fq-'+tab,'_blank','noopener');return;}
+  if(personal&&!page){navigateSelection(tab);return;}
+  if(!personal&&page){returnToLibrary();openDrawer(tab);return;}
   if(page&&drawerTab===tab)return;
   if(page){rememberSelectionView();const previous=selectionViews.get(tab);if(['later','skip'].includes(tab)){cq('query').value=previous?.query||'';if(previous?.active)reviewActive=previous.active;}}
   const opening=!drawerTab;
@@ -104,7 +104,7 @@ openDrawer=function(tab){
   host.dataset.side=String(!page);choiceHost.dataset.page=String(page);
   if(page){
     const previous=selectionViews.get(tab);if(previous){cq('rows').scrollTop=previous.listTop;cq('review-text').scrollTop=previous.textTop;}
-    const url=new URL(location.href);url.hash=tab;history.replaceState(history.state,'',url.href);
+    history.replaceState(history.state,'',selectionURL(tab));
     if(!selectionInitial)drawer.querySelector('[data-tab="'+tab+'"]').focus({preventScroll:true});
   }else if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});
 };
@@ -114,18 +114,18 @@ closeDrawer=function(){
 };
 function mountSelectionPage(){
   const libraryLink=document.querySelector('a[href="/library"]');if(libraryLink?.parentElement?.parentElement&&!navChoice.isConnected)libraryLink.parentElement.after(navChoice);
-  const active=isSelectionPage();
+  const active=isSelectionPage();navLink.href=selectionURL('later');
   if(!active){
     if(selectionMounted){selectionMounted=false;document.body.removeAttribute('data-fq-selection-page');document.querySelectorAll('[data-fq-selection-native]').forEach(el=>el.removeAttribute('data-fq-selection-native'));hideManagementView();drawer.dataset.selectionPage='false';document.body.append(drawer);if(document.title==='我的选书 · 番茄小说')document.title=selectionTitle;navLink.removeAttribute('aria-current');navLink.target=originalNavTarget;}
     return;
   }
-  if(!selectionMounted){selectionMounted=true;selectionTitle=document.title;document.body.dataset.fqSelectionPage='';document.title='我的选书 · 番茄小说';navLink.setAttribute('aria-current','page');navLink.target='_self';}
+  if(!selectionMounted){suspendLibrary();selectionMounted=true;selectionTitle=document.title;document.body.dataset.fqSelectionPage='';document.title='我的选书 · 番茄小说';navLink.setAttribute('aria-current','page');navLink.target='_self';}
   if(document.title!=='我的选书 · 番茄小说')document.title='我的选书 · 番茄小说';
   const native=document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
   if(native&&!native.contains(drawer)&&!native.querySelector('nav,.muye-header')){if(!native.hasAttribute('data-fq-selection-native'))native.setAttribute('data-fq-selection-native','');if(drawer.nextElementSibling!==native)native.before(drawer);}
   const top=Math.max(0,drawer.getBoundingClientRect().top+scrollY);const value=Math.round(top)+'px';if(drawer.style.getPropertyValue('--fq-page-top')!==value)drawer.style.setProperty('--fq-page-top',value);
-  if(!['later','skip','backup'].includes(drawerTab)){const tab=location.hash.slice(1);openDrawer(['later','skip','backup'].includes(tab)?tab:'later');selectionInitial=false;}
+  if(!['later','skip','backup'].includes(drawerTab)){openDrawer(selectionTab());selectionInitial=false;}
 }
-window.addEventListener('hashchange',()=>{if(isSelectionPage()){const tab=location.hash.slice(1);openDrawer(['later','skip','backup'].includes(tab)?tab:'later');}});
+window.addEventListener('hashchange',()=>{if(isSelectionPage()){mountFilterBar();openDrawer(selectionTab());}else if(selectionMounted)restoreLibraryView();});
 // A deep link can also open rules/history in a fresh library tab.
 setTimeout(()=>{if(supportedPage()&&['#fq-rules','#fq-history'].includes(location.hash))openDrawer(location.hash.slice(4));},0);

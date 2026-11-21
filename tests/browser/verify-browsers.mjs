@@ -19,12 +19,25 @@ async function start(name,executablePath){
 async function reload(item){await item.page.goto('https://fanqienovel.com/library?fq_view=selection#backup',{waitUntil:'domcontentloaded'});await item.page.waitForFunction(()=>document.getElementById('fq-filter-bar')?.shadowRoot.getElementById('backup-entry'));await item.page.evaluate(()=>document.getElementById('fq-filter-bar').shadowRoot.getElementById('backup-entry').click());}
 async function exportFile(item){await item.page.evaluate(()=>document.getElementById('fq-keyword-filter-host').shadowRoot.getElementById('backup-export').click());for(let i=0;i<100;i++){const files=(await fs.readdir(item.out)).filter(f=>f.endsWith('.json'));if(files.length)return path.join(item.out,files[0]);await wait(100);}throw Error('download timed out');}
 async function importDrop(item,file){const text=await fs.readFile(file,'utf8');await item.page.evaluate(text=>{const s=document.getElementById('fq-keyword-filter-host').shadowRoot;const dt=new DataTransfer();dt.items.add(new File([text],'配置.json',{type:'application/json'}));s.getElementById('backup-drop').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}));},text);await item.page.waitForFunction(()=>/导入完成|无需重复/.test(document.getElementById('fq-keyword-filter-host').shadowRoot.getElementById('backup-status').textContent));}
+async function verifyNavigation(item){
+ const p=item.page;await p.goto('https://fanqienovel.com/library?navigation-test',{waitUntil:'domcontentloaded'});await p.waitForFunction(()=>document.querySelector('#fq-selection-nav a'));
+ await p.evaluate(()=>{document.querySelector('main').style.minHeight='2600px';document.querySelector('nav').style.cssText='position:fixed;top:0;z-index:1000;background:white';window.__qaNode=document.querySelector('main');scrollTo(0,700);});
+ await p.evaluate(()=>document.querySelector('#fq-selection-nav a').click());await p.waitForFunction(()=>document.body.hasAttribute('data-fq-selection-page'));
+ assert.equal(await p.evaluate(()=>location.hash),'#fq-selection/later');
+ await p.evaluate(()=>document.querySelector('a[href="/library"]').click());await p.waitForFunction(()=>!document.body.hasAttribute('data-fq-selection-page')&&scrollY===700);
+ assert.equal(await p.evaluate(()=>window.__qaNode===document.querySelector('main')),true);
+ await p.evaluate(()=>history.back());await p.waitForFunction(()=>document.body.hasAttribute('data-fq-selection-page'));
+ await p.evaluate(()=>history.back());await p.waitForFunction(()=>!document.body.hasAttribute('data-fq-selection-page')&&scrollY===700);
+ assert.equal(await p.evaluate(()=>window.__qaNode===document.querySelector('main')),true);
+ console.log('PASS',item.name,'same-tab navigation, same DOM, back and scroll restoration');await reload(item);
+}
+
 try{
- const chrome=await start('chrome','C:/Program Files/Google/Chrome/Application/chrome.exe');
+ const chrome=await start('chrome','C:/Program Files/Google/Chrome/Application/chrome.exe');await verifyNavigation(chrome);
  await chrome.worker.evaluate(async()=>{await chrome.storage.local.set({'fq-keyword-filter-v1':{words:['原神','崩铁'],enabled:true,abstract:false},'fq-infinite-enabled':false,'fq-choice-123456':{id:'123456',title:'跨浏览器测试书',state:'later',note:'保留我的备注',noteRevision:1,updatedAt:100},'fq-history-book-345678':{id:'345678',title:'测试屏蔽书',author:'测试',matches:['原神'],firstSeen:1,lastSeen:2,handledAt:3}});});await reload(chrome);
  const chromeFile=await exportFile(chrome);assert.equal(JSON.parse(await fs.readFile(chromeFile,'utf8')).data.choices[0].note,'保留我的备注');
  const edgeRoot='C:/Program Files (x86)/Microsoft/Edge/Application';const edgeVersions=(await fs.readdir(edgeRoot)).filter(n=>/^\d+\.\d+\.\d+\.\d+$/.test(n)).sort((a,b)=>b.localeCompare(a,undefined,{numeric:true}));
- const edge=await start('edge',process.env.FQ_EDGE_PATH||path.join(edgeRoot,edgeVersions[0]||'', 'msedge.exe'));await importDrop(edge,chromeFile);
+ const edge=await start('edge',process.env.FQ_EDGE_PATH||path.join(edgeRoot,edgeVersions[0]||'', 'msedge.exe'));await verifyNavigation(edge);await importDrop(edge,chromeFile);
  const edgeData=await edge.worker.evaluate(()=>chrome.storage.local.get(null));assert.equal(edgeData['fq-choice-123456'].note,'保留我的备注');assert.equal(edgeData['fq-keyword-filter-v1'].words.length,2);assert.equal(edgeData['fq-infinite-enabled'],false);await importDrop(edge,chromeFile);
  await edge.page.screenshot({path:path.join(artifacts,'edge-import.png')});
  const edgeFile=await exportFile(edge);await chrome.worker.evaluate(()=>chrome.storage.local.clear());await reload(chrome);

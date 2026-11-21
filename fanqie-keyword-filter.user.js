@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         番茄书库 · 二游关键词屏蔽
 // @namespace    local.fanqie.keyword.filter
-// @version      1.13.0
+// @version      1.13.1
 // @description  在番茄书库和排行榜按书名、简介隐藏小说；支持字体编码识别、编辑词表、临时显示。
 // @match        https://fanqienovel.com/*
 // @match        https://www.fanqienovel.com/*
@@ -462,8 +462,13 @@ let reveal = false;
 let timer;
 let lastPath = location.pathname + location.search;
 const normalize = filterNormalize;
-const isSelectionPage = () => /^\/library\/?$/.test(location.pathname) && new URLSearchParams(location.search).get('fq_view') === 'selection';
-const selectionURL = tab => '/library?fq_view=selection#' + (['later','skip','backup'].includes(tab) ? tab : 'later');
+const isSelectionPage = () => /^\/library(?:\/|$)/.test(location.pathname) && (new URLSearchParams(location.search).get('fq_view') === 'selection' || /^#fq-selection\//.test(location.hash));
+const selectionTab = () => {const tab=location.hash.replace(/^#(?:fq-selection\/)?/,'');return ['later','skip','backup'].includes(tab)?tab:'later';};
+const selectionURL = tab => {
+  const value=['later','skip','backup'].includes(tab)?tab:'later';
+  if(/^\/library(?:\/|$)/.test(location.pathname)&&new URLSearchParams(location.search).get('fq_view')!=='selection')return location.pathname+location.search+'#fq-selection/'+value;
+  return '/library?fq_view=selection#'+value;
+};
 const supportedPage = () => !isSelectionPage() && /^\/(?:library|rank)(?:\/|$)/.test(location.pathname);
 
 const readText=createTextReader({fonts:FONTS,cardSelector:CARD});
@@ -810,8 +815,8 @@ layoutStyle.textContent=`
   .info>.fq-detail-feedback:not(:empty){padding-top:6px}
 `;document.head.append(layoutStyle);
 const navChoice=document.createElement('div');navChoice.className='nav-item';
-const navLink=document.createElement('a');navLink.href=selectionURL('later');navLink.target='_blank';navLink.rel='noopener';navLink.textContent='我的选书';navChoice.append(navLink);
-navChoice.id='fq-selection-nav';navLink.onclick=e=>{if(isSelectionPage()&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&e.button===0){e.preventDefault();openDrawer('later');}};
+const navLink=document.createElement('a');navLink.href=selectionURL('later');navLink.target='_self';navLink.rel='noopener';navLink.textContent='我的选书';navChoice.append(navLink);
+navChoice.id='fq-selection-nav';navLink.onclick=e=>{if(unmodifiedClick(e)){e.preventDefault();navigateSelection('later');}};
 const cq=id=>cs.getElementById(id);
 
 // SOURCE: src/features/shelf/sync.js
@@ -1211,6 +1216,7 @@ function scan() {
     const active = supportedPage();
     host.hidden = drawerReady?false:!active;
     if (!active) {
+      if(isSelectionPage())return; // Keep the hidden library's filtering and layout intact.
       document.querySelectorAll(`[${MARK}]`).forEach(card => card.removeAttribute(MARK));
       alignLibraryCards();
       return;
@@ -1309,13 +1315,14 @@ function makeStreamCard(book,s) {
 }
 async function loadStream(manual=false) {
   const s=stream;
-  if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||intro||filterToolsOpen||Date.now()<suppressAutoUntil)))return;
+  if(!s||isSelectionPage()||s.suspended||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||intro||filterToolsOpen||Date.now()<suppressAutoUntil)))return;
   if(s.key!==routeKey())return;
+  const requestEpoch=s.requestEpoch||0;
   if(manual){s.empty=0;s.error='';}
   s.loading=true;updateStreamStatus();
   const delay=Math.max(0,600-(Date.now()-(s.lastRequest||0)));
   if(delay)await new Promise(r=>setTimeout(r,delay));
-  if(stream!==s||s.key!==routeKey()){s.loading=false;return;}
+  if(stream!==s||s.key!==routeKey()||isSelectionPage()||requestEpoch!==(s.requestEpoch||0)){s.loading=false;return;}
   s.lastRequest=Date.now();
   s.controller=new AbortController();
   const timeout=setTimeout(()=>s.controller.abort(),20000);
@@ -1324,7 +1331,7 @@ async function loadStream(manual=false) {
     if(!response.ok)throw Error('请求失败（'+response.status+'）');
     const json=await response.json();
     if(json.code!==0||!Array.isArray(json.data?.book_list))throw Error('书库返回异常，请稍后重试');
-    if(stream!==s||s.key!==routeKey()||!s.native.isConnected)return;
+    if(stream!==s||s.key!==routeKey()||requestEpoch!==(s.requestEpoch||0)||!s.native.isConnected)return;
     const books=json.data.book_list;
     const more=json.data.has_more;
     const ended=more===false||more===0||more==='0'||(books.length===0&&more!==true&&more!==1);
@@ -1341,13 +1348,14 @@ async function loadStream(manual=false) {
     if(s.empty>=3)s.paused=true;
     scan();
   } catch(e) {
-    if(stream===s&&s.key===routeKey()){s.error=e.name==='AbortError'?'请求超时，请重试':e.message;s.paused=true;}
+    if(stream===s&&s.key===routeKey()&&requestEpoch===(s.requestEpoch||0)){s.error=e.name==='AbortError'?'请求超时，请重试':e.message;s.paused=true;}
   } finally {
     clearTimeout(timeout);s.loading=false;
     if(stream===s){updateStreamStatus();setTimeout(()=>{if(stream===s&&s.controls.getBoundingClientRect().top<innerHeight+500)loadStream();},800);}
   }
 }
 function syncStream() {
+  if(isSelectionPage())return; // Keep an existing stream dormant; direct entry creates none.
   if(typeof IntersectionObserver==='undefined')return;
   const native=document.querySelector('.muye-stack-book-list:not([data-fq-stream])');
   const key=routeKey();
@@ -1724,8 +1732,8 @@ function rememberSelectionView(){
 }
 openDrawer=function(tab){
   const page=isSelectionPage(),personal=['later','skip','backup'].includes(tab);
-  if(personal&&!page){window.open(selectionURL(tab),'_blank','noopener');return;}
-  if(!personal&&page){window.open('/library#fq-'+tab,'_blank','noopener');return;}
+  if(personal&&!page){navigateSelection(tab);return;}
+  if(!personal&&page){returnToLibrary();openDrawer(tab);return;}
   if(page&&drawerTab===tab)return;
   if(page){rememberSelectionView();const previous=selectionViews.get(tab);if(['later','skip'].includes(tab)){cq('query').value=previous?.query||'';if(previous?.active)reviewActive=previous.active;}}
   const opening=!drawerTab;
@@ -1739,7 +1747,7 @@ openDrawer=function(tab){
   host.dataset.side=String(!page);choiceHost.dataset.page=String(page);
   if(page){
     const previous=selectionViews.get(tab);if(previous){cq('rows').scrollTop=previous.listTop;cq('review-text').scrollTop=previous.textTop;}
-    const url=new URL(location.href);url.hash=tab;history.replaceState(history.state,'',url.href);
+    history.replaceState(history.state,'',selectionURL(tab));
     if(!selectionInitial)drawer.querySelector('[data-tab="'+tab+'"]').focus({preventScroll:true});
   }else if(opening)drawer.querySelector('#fq-drawer-close').focus({preventScroll:true});
 };
@@ -1749,21 +1757,85 @@ closeDrawer=function(){
 };
 function mountSelectionPage(){
   const libraryLink=document.querySelector('a[href="/library"]');if(libraryLink?.parentElement?.parentElement&&!navChoice.isConnected)libraryLink.parentElement.after(navChoice);
-  const active=isSelectionPage();
+  const active=isSelectionPage();navLink.href=selectionURL('later');
   if(!active){
     if(selectionMounted){selectionMounted=false;document.body.removeAttribute('data-fq-selection-page');document.querySelectorAll('[data-fq-selection-native]').forEach(el=>el.removeAttribute('data-fq-selection-native'));hideManagementView();drawer.dataset.selectionPage='false';document.body.append(drawer);if(document.title==='我的选书 · 番茄小说')document.title=selectionTitle;navLink.removeAttribute('aria-current');navLink.target=originalNavTarget;}
     return;
   }
-  if(!selectionMounted){selectionMounted=true;selectionTitle=document.title;document.body.dataset.fqSelectionPage='';document.title='我的选书 · 番茄小说';navLink.setAttribute('aria-current','page');navLink.target='_self';}
+  if(!selectionMounted){suspendLibrary();selectionMounted=true;selectionTitle=document.title;document.body.dataset.fqSelectionPage='';document.title='我的选书 · 番茄小说';navLink.setAttribute('aria-current','page');navLink.target='_self';}
   if(document.title!=='我的选书 · 番茄小说')document.title='我的选书 · 番茄小说';
   const native=document.querySelector('.muye-stack')||document.querySelector('main:not(#fq-drawer)');
   if(native&&!native.contains(drawer)&&!native.querySelector('nav,.muye-header')){if(!native.hasAttribute('data-fq-selection-native'))native.setAttribute('data-fq-selection-native','');if(drawer.nextElementSibling!==native)native.before(drawer);}
   const top=Math.max(0,drawer.getBoundingClientRect().top+scrollY);const value=Math.round(top)+'px';if(drawer.style.getPropertyValue('--fq-page-top')!==value)drawer.style.setProperty('--fq-page-top',value);
-  if(!['later','skip','backup'].includes(drawerTab)){const tab=location.hash.slice(1);openDrawer(['later','skip','backup'].includes(tab)?tab:'later');selectionInitial=false;}
+  if(!['later','skip','backup'].includes(drawerTab)){openDrawer(selectionTab());selectionInitial=false;}
 }
-window.addEventListener('hashchange',()=>{if(isSelectionPage()){const tab=location.hash.slice(1);openDrawer(['later','skip','backup'].includes(tab)?tab:'later');}});
+window.addEventListener('hashchange',()=>{if(isSelectionPage()){mountFilterBar();openDrawer(selectionTab());}else if(selectionMounted)restoreLibraryView();});
 // A deep link can also open rules/history in a fresh library tab.
 setTimeout(()=>{if(supportedPage()&&['#fq-rules','#fq-history'].includes(location.hash))openDrawer(location.hash.slice(4));},0);
+
+// SOURCE: src/features/shell/selection-navigation.js
+// Keep the current library DOM and stream in memory while the personal page is shown.
+// Nothing here is persisted: refreshing starts from the URL's native library page.
+let libraryVisit=null,navigationFrame=0;
+const nativeLibraryURL=()=>{const url=new URL(location.href);url.searchParams.delete('fq_view');if(/^#fq-selection\//.test(url.hash)||['#later','#skip','#backup'].includes(url.hash))url.hash='';return url;};
+function captureLibraryVisit(){
+  const native=document.querySelector('.muye-stack')||document.querySelector('.muye-stack-book-list');
+  const anchors=[...document.querySelectorAll(CARD)].filter(el=>!el.closest('[data-fq-native-hidden]')&&el.getAttribute(MARK)!=='hide').map(el=>({el,top:el.getBoundingClientRect().top})).filter(item=>item.top>=0&&item.top<innerHeight).slice(0,6);
+  const containers=[];for(let el=native;el&&el!==document.body;el=el.parentElement)if(el.scrollHeight>el.clientHeight&&/auto|scroll/.test(getComputedStyle(el).overflowY))containers.push({el,top:el.scrollTop,left:el.scrollLeft});
+  const url=nativeLibraryURL();
+  libraryVisit={url:url.href,key:url.pathname+url.search,native,x:scrollX,y:scrollY,anchors,containers};
+}
+function suspendLibrary(){
+  if(stream&&!stream.suspended){stream.suspended=true;stream.requestEpoch=(stream.requestEpoch||0)+1;stream.controller?.abort();}
+}
+function resumeLibraryPosition(){
+  const visit=libraryVisit;
+  if(!visit||visit.key!==routeKey()||!visit.native?.isConnected)return;
+  const restore=()=>{
+    if(isSelectionPage()||visit!==libraryVisit||visit.key!==routeKey())return;
+    for(const item of visit.containers)if(item.el.isConnected){item.el.scrollTop=item.top;item.el.scrollLeft=item.left;}
+    window.scrollTo({left:visit.x,top:visit.y,behavior:'instant'});
+    const anchor=visit.anchors.find(item=>item.el.isConnected&&item.el.getAttribute(MARK)!=='hide'&&item.el.getClientRects().length);
+    if(anchor)window.scrollTo({left:visit.x,top:scrollY+anchor.el.getBoundingClientRect().top-anchor.top,behavior:'instant'});
+  };
+  restore();cancelAnimationFrame(navigationFrame);navigationFrame=requestAnimationFrame(restore);
+}
+function navigateSelection(tab='later'){
+  if(isSelectionPage()){openDrawer(tab);return;}
+  if(!/^\/library(?:\/|$)/.test(location.pathname)){location.assign(selectionURL(tab));return;}
+  captureLibraryVisit();closeIntro(false);if(drawerTab)closeDrawer();suspendLibrary();
+  history.pushState(history.state,'',selectionURL(tab));
+  window.scrollTo({left:0,top:0,behavior:'instant'});mountFilterBar();openDrawer(tab);
+}
+function returnToLibrary(){
+  if(!isSelectionPage())return;
+  rememberSelectionView();
+  const url=libraryVisit?.native?.isConnected?libraryVisit.url:nativeLibraryURL().href;
+  history.pushState(history.state,'',url);restoreLibraryView();
+}
+function restoreLibraryView(){
+  mountFilterBar();if(stream)stream.suspended=false;
+  suppressAutoUntil=Date.now()+1500;syncStream();scan();renderChoices();resumeLibraryPosition();
+}
+const unmodifiedClick=e=>e.button===0&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey;
+// Capture only the library navigation item; native category/filter and other links stay native.
+document.addEventListener('click',e=>{
+  if(!isSelectionPage()||!unmodifiedClick(e))return;
+  const link=e.target.closest?.('a[href]');if(!link||new URL(link.href,location.href).pathname!=='/library'||link===navLink)return;
+  if(!link.closest('.nav-item,nav,.muye-header'))return;
+  e.preventDefault();e.stopImmediatePropagation();returnToLibrary();
+},true);
+window.addEventListener('popstate',e=>{
+  if(!isSelectionPage()&&!selectionMounted)return;
+  const base=nativeLibraryURL(),ownRoute=/^\/library(?:\/|$)/.test(location.pathname)&&(!libraryVisit||base.pathname+base.search===new URL(libraryVisit.url).pathname+new URL(libraryVisit.url).search);
+  if(!ownRoute){mountFilterBar();return;}
+  // Our hash-only entries did not notify the website router; do not make it reload the library now.
+  e.stopImmediatePropagation();
+  if(isSelectionPage()){
+    if(!selectionMounted){captureLibraryVisit();suspendLibrary();window.scrollTo({left:0,top:0,behavior:'instant'});}
+    mountFilterBar();openDrawer(selectionTab());
+  }else{rememberSelectionView();restoreLibraryView();}
+},true);
 
 // SOURCE: src/app/services.js
 // The composition root: features use services; providers cannot access storage or shelf writes.

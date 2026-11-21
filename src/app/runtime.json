@@ -21,6 +21,7 @@
   "src/features/rules/layout.js",
   "src/features/backup/panel.js",
   "src/features/shell/selection-page.js",
+  "src/features/shell/selection-navigation.js",
   "src/app/services.js",
   "src/app/bootstrap.js"
 ]

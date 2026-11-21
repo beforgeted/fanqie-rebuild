@@ -45,7 +45,7 @@ const records=()=>Object.entries(values).filter(([key])=>key.startsWith('fq-hist
   drawer.dispatchEvent(new a.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.ok(drawer.hidden);assert.equal(a.document.activeElement,tool);
   const native=a.document.createElement('div');native.className='float-wrapper';a.document.body.append(native);await wait(750);assert.equal(tool.parentElement,native,'joins native tools when available');
   assert.equal(a.document.querySelectorAll('#fq-filter-tool').length,1);
-  assert.equal(nav.target,'_blank');assert.equal(new URL(nav.href).searchParams.get('fq_view'),'selection');
+  assert.equal(nav.target,'_self');assert.equal(new URL(nav.href).hash,'#fq-selection/later');
   assert.ok(drawer.hidden,'personal navigation no longer opens a modal');
   assert.equal(a.location.href,url);assert.equal(a.document.documentElement.getAttribute('style'),htmlStyle);
   bar.getElementById('words').click();sh.getElementById('words').value='未保存草稿';drawer.querySelector('[data-tab=history]').click();drawer.querySelector('[data-tab=rules]').click();assert.equal(sh.getElementById('words').value,'未保存草稿','tab switches retain unsaved edits');

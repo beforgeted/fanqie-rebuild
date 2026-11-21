@@ -57,13 +57,14 @@ function makeStreamCard(book,s) {
 }
 async function loadStream(manual=false) {
   const s=stream;
-  if(!s||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||intro||filterToolsOpen||Date.now()<suppressAutoUntil)))return;
+  if(!s||isSelectionPage()||s.suspended||s.loading||s.done||(!manual&&(s.paused||document.hidden||drawerTab||intro||filterToolsOpen||Date.now()<suppressAutoUntil)))return;
   if(s.key!==routeKey())return;
+  const requestEpoch=s.requestEpoch||0;
   if(manual){s.empty=0;s.error='';}
   s.loading=true;updateStreamStatus();
   const delay=Math.max(0,600-(Date.now()-(s.lastRequest||0)));
   if(delay)await new Promise(r=>setTimeout(r,delay));
-  if(stream!==s||s.key!==routeKey()){s.loading=false;return;}
+  if(stream!==s||s.key!==routeKey()||isSelectionPage()||requestEpoch!==(s.requestEpoch||0)){s.loading=false;return;}
   s.lastRequest=Date.now();
   s.controller=new AbortController();
   const timeout=setTimeout(()=>s.controller.abort(),20000);
@@ -72,7 +73,7 @@ async function loadStream(manual=false) {
     if(!response.ok)throw Error('请求失败（'+response.status+'）');
     const json=await response.json();
     if(json.code!==0||!Array.isArray(json.data?.book_list))throw Error('书库返回异常，请稍后重试');
-    if(stream!==s||s.key!==routeKey()||!s.native.isConnected)return;
+    if(stream!==s||s.key!==routeKey()||requestEpoch!==(s.requestEpoch||0)||!s.native.isConnected)return;
     const books=json.data.book_list;
     const more=json.data.has_more;
     const ended=more===false||more===0||more==='0'||(books.length===0&&more!==true&&more!==1);
@@ -89,13 +90,14 @@ async function loadStream(manual=false) {
     if(s.empty>=3)s.paused=true;
     scan();
   } catch(e) {
-    if(stream===s&&s.key===routeKey()){s.error=e.name==='AbortError'?'请求超时，请重试':e.message;s.paused=true;}
+    if(stream===s&&s.key===routeKey()&&requestEpoch===(s.requestEpoch||0)){s.error=e.name==='AbortError'?'请求超时，请重试':e.message;s.paused=true;}
   } finally {
     clearTimeout(timeout);s.loading=false;
     if(stream===s){updateStreamStatus();setTimeout(()=>{if(stream===s&&s.controls.getBoundingClientRect().top<innerHeight+500)loadStream();},800);}
   }
 }
 function syncStream() {
+  if(isSelectionPage())return; // Keep an existing stream dormant; direct entry creates none.
   if(typeof IntersectionObserver==='undefined')return;
   const native=document.querySelector('.muye-stack-book-list:not([data-fq-stream])');
   const key=routeKey();

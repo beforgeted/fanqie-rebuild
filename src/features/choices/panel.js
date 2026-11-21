@@ -25,6 +25,6 @@ layoutStyle.textContent=`
   .info>.fq-detail-feedback:not(:empty){padding-top:6px}
 `;document.head.append(layoutStyle);
 const navChoice=document.createElement('div');navChoice.className='nav-item';
-const navLink=document.createElement('a');navLink.href=selectionURL('later');navLink.target='_blank';navLink.rel='noopener';navLink.textContent='我的选书';navChoice.append(navLink);
-navChoice.id='fq-selection-nav';navLink.onclick=e=>{if(isSelectionPage()&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&e.button===0){e.preventDefault();openDrawer('later');}};
+const navLink=document.createElement('a');navLink.href=selectionURL('later');navLink.target='_self';navLink.rel='noopener';navLink.textContent='我的选书';navChoice.append(navLink);
+navChoice.id='fq-selection-nav';navLink.onclick=e=>{if(unmodifiedClick(e)){e.preventDefault();navigateSelection('later');}};
 const cq=id=>cs.getElementById(id);

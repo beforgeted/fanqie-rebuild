@@ -14,7 +14,7 @@ function page(url){
 (async()=>{try{
  const library=page('https://fanqienovel.com/library');await until(()=>library.document.getElementById('fq-filter-tool'));
  const link=library.document.querySelector('#fq-selection-nav a'),originalURL=library.location.href;
- assert.equal(link.target,'_blank');assert.equal(new URL(link.href).searchParams.get('fq_view'),'selection');assert.equal(library.document.querySelector('#fq-drawer').hidden,true);
+ assert.equal(link.target,'_self');assert.equal(new URL(link.href).hash,'#fq-selection/later');assert.equal(library.document.querySelector('#fq-drawer').hidden,true);
  const view=page(link.href);await until(()=>view.document.body.hasAttribute('data-fq-selection-page'));
  const drawer=view.document.getElementById('fq-drawer'),shadow=view.document.getElementById('fq-choice-host').shadowRoot;
  assert.equal(drawer.hidden,false);assert.equal(drawer.querySelector('[role=region]').getAttribute('aria-modal'),null);
@@ -25,7 +25,7 @@ function page(url){
  assert.equal(library.location.href,originalURL,'source library remains untouched');
  assert.equal(values['fq-choice-123456'].note,'保留备注');
  shadow.getElementById('query').value='候选';shadow.getElementById('query').oninput();shadow.getElementById('rows').scrollTop=123;
- drawer.querySelector('#fq-data-management').click();assert.equal(view.location.hash,'#backup');
+ drawer.querySelector('#fq-data-management').click();assert.equal(view.location.hash,'#fq-selection/backup');
  drawer.querySelector('[data-tab=later]').click();assert.equal(shadow.getElementById('query').value,'候选');assert.equal(shadow.getElementById('rows').scrollTop,123);
  const reloaded=page(view.location.href);await until(()=>reloaded.document.body.hasAttribute('data-fq-selection-page'));assert.equal(reloaded.document.getElementById('fq-drawer').hidden,false,'direct URL survives refresh');
  const backup=page('https://fanqienovel.com/library?fq_view=selection#backup');await until(()=>backup.document.body.hasAttribute('data-fq-selection-page'));assert.equal(backup.document.getElementById('fq-keyword-filter-host').shadowRoot.getElementById('backup-view').hidden,false);
