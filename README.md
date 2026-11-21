@@ -2,7 +2,7 @@
 
 在电脑上更方便地筛选番茄小说：屏蔽不想看的题材，留下感兴趣的书，挑好后同步到手机。
 
-适用于 **Chrome / Edge**，当前版本 **1.13.8**。功能融入番茄原网页，安装后即可使用。
+适用于 **Chrome / Edge**，当前版本 **[1.13.8](https://github.com/beforgeted/fanqie-rebuild/releases/tag/v1.13.8)**。功能融入番茄原网页，安装后即可使用。
 
 ## 找书可以更顺手
 
@@ -16,7 +16,7 @@
 
 ## 开始使用
 
-1. [下载仓库 ZIP](https://github.com/beforgeted/fanqie-rebuild/archive/refs/heads/main.zip)，解压到准备长期保留的位置。
+1. [下载 Chrome／Edge 安装包](https://github.com/beforgeted/fanqie-rebuild/releases/download/v1.13.8/fanqie-rebuild-v1.13.8-Chrome-Edge.zip)，解压到准备长期保留的位置。
 2. 打开 `chrome://extensions/` 或 `edge://extensions/`，开启“开发者模式”。
 3. 点击“加载未打包的扩展程序”，选择解压目录中的 **chrome-extension** 文件夹。
 4. 打开或刷新 [番茄书库](https://fanqienovel.com/library)。右侧“筛书设置”管理关键词，顶部“我的选书”查看候选。
